@@ -1,13 +1,14 @@
 {
   "name": "ralph-wiggum-cli-example",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "start": "npx tsx index.ts"
   },
   "dependencies": {
     "ai": "^6.0.0",
-    "ralph-wiggum": "file:../..",
+    "ralph-wiggum": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {
@@ -15,4 +16,3 @@
     "tsx": "^4.0.0"
   }
 }
-
