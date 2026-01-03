@@ -6,11 +6,19 @@ import {
   type StreamTextResult,
   type ToolSet,
   type LanguageModel,
+  type LanguageModelUsage,
   type StopCondition,
 } from 'ai';
 import type { ModelMessage } from '@ai-sdk/provider-utils';
 import type { RalphLoopAgentSettings } from './ralph-loop-agent-settings';
 import type { VerifyCompletionResult } from './ralph-loop-agent-evaluator';
+import {
+  iterationCountIs,
+  isRalphStopConditionMet,
+  addLanguageModelUsage,
+  type RalphStopCondition,
+  type RalphStopConditionContext,
+} from './ralph-stop-condition';
 
 /**
  * Parameters for calling a RalphLoopAgent.
@@ -62,20 +70,9 @@ export interface RalphLoopAgentResult<TOOLS extends ToolSet = {}> {
   readonly allResults: Array<GenerateTextResult<TOOLS, never>>;
 }
 
-/**
- * Stop condition for iteration count.
- */
-export type IterationStopCondition = {
-  type: 'iteration-count';
-  count: number;
-};
-
-/**
- * Creates a stop condition that stops after N iterations.
- */
-export function iterationCountIs(count: number): IterationStopCondition {
-  return { type: 'iteration-count', count };
-}
+// Re-export stop condition helpers
+export { iterationCountIs } from './ralph-stop-condition';
+export type { RalphStopCondition, RalphStopConditionContext } from './ralph-stop-condition';
 
 /**
  * A Ralph Loop Agent implements the "Ralph Wiggum" technique - an iterative
@@ -125,18 +122,50 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
   }
 
   /**
-   * The maximum number of iterations.
+   * Get the model identifier string.
    */
-  get maxIterations(): number {
-    const stopWhen = this.settings.stopWhen;
-    if (stopWhen && 'type' in stopWhen && stopWhen.type === 'iteration-count') {
-      return stopWhen.count;
+  private getModelId(): string {
+    const model = this.settings.model;
+    // Handle both string models (gateway format) and LanguageModel objects
+    if (typeof model === 'string') {
+      return model;
     }
-    return 10; // default
+    return model.modelId ?? 'unknown';
   }
 
   /**
-   * Runs the agent loop until completion or max iterations.
+   * Get the stop conditions as an array.
+   */
+  private getStopConditions(): Array<RalphStopCondition<TOOLS>> {
+    const stopWhen = this.settings.stopWhen;
+    if (!stopWhen) {
+      return [iterationCountIs(10)]; // default
+    }
+    return Array.isArray(stopWhen) ? stopWhen : [stopWhen];
+  }
+
+  /**
+   * Create an empty usage object.
+   */
+  private createEmptyUsage(): LanguageModelUsage {
+    return {
+      inputTokens: 0,
+      inputTokenDetails: {
+        noCacheTokens: undefined,
+        cacheReadTokens: undefined,
+        cacheWriteTokens: undefined,
+      },
+      outputTokens: 0,
+      outputTokenDetails: {
+        textTokens: undefined,
+        reasoningTokens: undefined,
+      },
+      totalTokens: 0,
+    };
+  }
+
+  /**
+   * Runs the agent loop until completion or stop condition is met.
    */
   async loop({
     prompt,
@@ -145,10 +174,12 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
     const allResults: Array<GenerateTextResult<TOOLS, never>> = [];
     let currentMessages: Array<ModelMessage> = [];
     let iteration = 0;
+    let totalUsage: LanguageModelUsage = this.createEmptyUsage();
     let completionReason: RalphLoopAgentResult<TOOLS>['completionReason'] = 'max-iterations';
     let reason: string | undefined;
 
-    const maxIterations = this.maxIterations;
+    const stopConditions = this.getStopConditions();
+    const modelId = this.getModelId();
 
     // Build the initial user message
     const initialUserMessage: ModelMessage = {
@@ -159,7 +190,8 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
     // Add instructions as system message if provided
     const systemMessages = this.buildSystemMessages();
 
-    while (iteration < maxIterations) {
+    // Loop until stop condition is met
+    while (true) {
       // Check for abort
       if (abortSignal?.aborted) {
         completionReason = 'aborted';
@@ -218,6 +250,9 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
 
       allResults.push(result);
 
+      // Update total usage
+      totalUsage = addLanguageModelUsage(totalUsage, result.usage);
+
       // Add the response messages to conversation history
       currentMessages = [...currentMessages, ...result.response.messages];
 
@@ -229,6 +264,19 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
         duration,
         result,
       });
+
+      // Check stop conditions AFTER running iteration
+      const stopContext: RalphStopConditionContext<TOOLS> = {
+        iteration,
+        allResults,
+        totalUsage,
+        model: modelId,
+      };
+
+      if (await isRalphStopConditionMet({ stopConditions, context: stopContext })) {
+        completionReason = 'max-iterations';
+        break;
+      }
 
       // Verify completion
       if (this.settings.verifyCompletion) {
@@ -283,8 +331,10 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
     const allResults: Array<GenerateTextResult<TOOLS, never>> = [];
     let currentMessages: Array<ModelMessage> = [];
     let iteration = 0;
+    let totalUsage: LanguageModelUsage = this.createEmptyUsage();
 
-    const maxIterations = this.maxIterations;
+    const stopConditions = this.getStopConditions();
+    const modelId = this.getModelId();
 
     const initialUserMessage: ModelMessage = {
       role: 'user',
@@ -293,13 +343,27 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
 
     const systemMessages = this.buildSystemMessages();
 
-    // Run non-streaming iterations until completion or second-to-last
-    while (iteration < maxIterations - 1) {
+    // Run non-streaming iterations until we should stream the final one
+    while (true) {
       if (abortSignal?.aborted) {
         break;
       }
 
       iteration++;
+
+      // Check if THIS iteration would be the last (next would hit stop condition)
+      const nextStopContext: RalphStopConditionContext<TOOLS> = {
+        iteration: iteration + 1,
+        allResults,
+        totalUsage,
+        model: modelId,
+      };
+
+      // If next iteration would stop, stream this one instead
+      if (await isRalphStopConditionMet({ stopConditions, context: nextStopContext })) {
+        break;
+      }
+
       const startTime = Date.now();
 
       await this.settings.onIterationStart?.({ iteration });
@@ -346,6 +410,7 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
       })) as GenerateTextResult<TOOLS, never>;
 
       allResults.push(result);
+      totalUsage = addLanguageModelUsage(totalUsage, result.usage);
       currentMessages = [...currentMessages, ...result.response.messages];
 
       const duration = Date.now() - startTime;

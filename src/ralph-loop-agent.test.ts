@@ -278,12 +278,23 @@ describe('RalphLoopAgent', () => {
   });
 
   describe('iterationCountIs', () => {
-    it('should create correct stop condition', () => {
+    it('should create a stop condition function', () => {
       const condition = iterationCountIs(5);
-      expect(condition).toEqual({ type: 'iteration-count', count: 5 });
+      expect(typeof condition).toBe('function');
     });
 
-    it('should control max iterations', async () => {
+    it('should stop at the specified iteration count', () => {
+      const condition = iterationCountIs(5);
+      
+      // Should not stop before reaching count
+      expect(condition({ iteration: 4, allResults: [], totalUsage: {} as any, model: 'test' })).toBe(false);
+      // Should stop at count
+      expect(condition({ iteration: 5, allResults: [], totalUsage: {} as any, model: 'test' })).toBe(true);
+      // Should stop after count
+      expect(condition({ iteration: 6, allResults: [], totalUsage: {} as any, model: 'test' })).toBe(true);
+    });
+
+    it('should control max iterations in agent', async () => {
       const mockModel = new MockLanguageModelV3({
         doGenerate: async () => ({
           content: [{ type: 'text', text: 'Response' }],
@@ -298,8 +309,6 @@ describe('RalphLoopAgent', () => {
         stopWhen: iterationCountIs(7),
         verifyCompletion: () => ({ complete: false }),
       });
-
-      expect(agent.maxIterations).toBe(7);
 
       const result = await agent.loop({ prompt: 'Test' });
       expect(result.iterations).toBe(7);
@@ -375,13 +384,28 @@ describe('RalphLoopAgent', () => {
       expect(agent.tools).toBeUndefined();
     });
 
-    it('should have default maxIterations of 10', () => {
-      const mockModel = new MockLanguageModelV3();
-      const agent = new RalphLoopAgent({
-        model: mockModel,
+    it('should default to 10 iterations when no stopWhen is provided', async () => {
+      let callCount = 0;
+      const mockModel = new MockLanguageModelV3({
+        doGenerate: async () => {
+          callCount++;
+          return {
+            content: [{ type: 'text', text: 'Response' }],
+            finishReason: { unified: 'stop', raw: 'stop' },
+            usage: createMockUsage(),
+            warnings: [],
+          };
+        },
       });
 
-      expect(agent.maxIterations).toBe(10);
+      const agent = new RalphLoopAgent({
+        model: mockModel,
+        // No stopWhen, should default to 10 iterations
+        verifyCompletion: () => ({ complete: false }),
+      });
+
+      const result = await agent.loop({ prompt: 'Test' });
+      expect(result.iterations).toBe(10);
     });
   });
 });

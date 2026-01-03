@@ -11,7 +11,7 @@ import type {
 } from 'ai';
 import type { ProviderOptions, SystemModelMessage } from '@ai-sdk/provider-utils';
 import type { VerifyCompletionFunction } from './ralph-loop-agent-evaluator';
-import type { IterationStopCondition } from './ralph-loop-agent';
+import type { RalphStopCondition } from './ralph-stop-condition';
 
 /**
  * Callback invoked at the start of each iteration.
@@ -78,11 +78,26 @@ export type RalphLoopAgentSettings<TOOLS extends ToolSet = {}> = Omit<
 
   /**
    * When to stop the outer Ralph loop.
-   * Use iterationCountIs(n) to stop after n iterations.
+   *
+   * Use helper functions like `iterationCountIs()`, `tokenCountIs()`, or `costIs()`.
+   * Multiple conditions can be provided as an array (OR'd together).
    *
    * @default iterationCountIs(10)
+   *
+   * @example
+   * ```ts
+   * // Single condition
+   * stopWhen: iterationCountIs(50)
+   *
+   * // Multiple conditions (stops when ANY is met)
+   * stopWhen: [
+   *   iterationCountIs(50),
+   *   tokenCountIs(100_000),
+   *   costIs(2.00),
+   * ]
+   * ```
    */
-  stopWhen?: IterationStopCondition;
+  stopWhen?: RalphStopCondition<NoInfer<TOOLS>> | Array<RalphStopCondition<NoInfer<TOOLS>>>;
 
   /**
    * When to stop the inner tool loop within each iteration.

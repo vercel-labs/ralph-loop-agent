@@ -1,10 +1,26 @@
 // Main agent export
-export { RalphLoopAgent, iterationCountIs } from './ralph-loop-agent';
+export { RalphLoopAgent } from './ralph-loop-agent';
 export type {
   RalphLoopAgentCallParameters,
   RalphLoopAgentResult,
-  IterationStopCondition,
 } from './ralph-loop-agent';
+
+// Stop condition exports
+export {
+  iterationCountIs,
+  tokenCountIs,
+  inputTokenCountIs,
+  outputTokenCountIs,
+  costIs,
+  getModelPricing,
+  calculateCost,
+  addLanguageModelUsage,
+} from './ralph-stop-condition';
+export type {
+  RalphStopCondition,
+  RalphStopConditionContext,
+  CostRates,
+} from './ralph-stop-condition';
 
 // Settings types
 export type {
