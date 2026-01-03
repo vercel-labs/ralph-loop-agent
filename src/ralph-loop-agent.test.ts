@@ -41,10 +41,7 @@ describe('RalphLoopAgent', () => {
           return {
             content: [{ type: 'text', text: `Attempt ${callCount}` }],
             finishReason: { unified: 'stop', raw: 'stop' },
-            usage: {
-              inputTokens: { total: 10, noCache: 10 },
-              outputTokens: { total: 20, text: 20 },
-            },
+            usage: createMockUsage(),
             warnings: [],
           };
         },
@@ -96,10 +93,7 @@ describe('RalphLoopAgent', () => {
           return {
             content: [{ type: 'text', text: 'Done' }],
             finishReason: { unified: 'stop', raw: 'stop' },
-            usage: {
-              inputTokens: { total: 10, noCache: 10 },
-              outputTokens: { total: 20, text: 20 },
-            },
+            usage: createMockUsage(),
             warnings: [],
           };
         },
@@ -171,10 +165,7 @@ describe('RalphLoopAgent', () => {
           return {
             content: [{ type: 'text', text: `Response ${callCount}` }],
             finishReason: { unified: 'stop', raw: 'stop' },
-            usage: {
-              inputTokens: { total: 10, noCache: 10 },
-              outputTokens: { total: 20, text: 20 },
-            },
+            usage: createMockUsage(),
             warnings: [],
           };
         },
@@ -340,10 +331,7 @@ describe('RalphLoopAgent', () => {
             {
               type: 'finish',
               finishReason: { unified: 'stop', raw: 'stop' },
-              usage: {
-                inputTokens: { total: 10, noCache: 10 },
-                outputTokens: { total: 20, text: 20 },
-              },
+              usage: createMockUsage(),
             },
           ]),
         }),
