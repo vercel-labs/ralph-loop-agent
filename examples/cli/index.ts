@@ -23,7 +23,7 @@ import {
   iterationCountIs,
   type VerifyCompletionContext,
 } from 'ralph-wiggum';
-import { tool, generateText } from 'ai';
+import { tool, generateText, stepCountIs } from 'ai';
 import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -654,9 +654,204 @@ const tools = {
 
 type Tools = typeof tools;
 
+// Read-only tools for the judge agent
+const judgeTools = {
+  listFiles: tool({
+    description: 'List files in a directory matching a glob pattern',
+    inputSchema: z.object({
+      pattern: z.string().describe('Glob pattern like "**/*.js" or "src/**/*.ts"'),
+    }),
+    execute: async ({ pattern }) => {
+      try {
+        const files = await glob(pattern, { cwd: resolvedDir, nodir: true });
+        return { success: true, files: files.slice(0, 100) };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    },
+  }),
+
+  readFile: tool({
+    description: 'Read the contents of a file to review changes',
+    inputSchema: z.object({
+      filePath: z.string().describe('Path to the file relative to the project root'),
+      lineStart: z.number().optional().describe('Start line (1-indexed)'),
+      lineEnd: z.number().optional().describe('End line (inclusive)'),
+    }),
+    execute: async ({ filePath, lineStart, lineEnd }) => {
+      try {
+        const fullPath = path.join(resolvedDir, filePath);
+        const content = await fs.readFile(fullPath, 'utf-8');
+        const lines = content.split('\n');
+        const totalLines = lines.length;
+        
+        if (lineStart !== undefined || lineEnd !== undefined) {
+          const start = Math.max(1, lineStart ?? 1);
+          const end = Math.min(totalLines, lineEnd ?? totalLines);
+          const selectedLines = lines.slice(start - 1, end);
+          return { 
+            success: true, 
+            content: selectedLines.join('\n'),
+            totalLines,
+          };
+        }
+        
+        // Truncate for judge
+        if (content.length > 15000) {
+          return { 
+            success: true, 
+            content: content.slice(0, 15000) + '\n... [truncated]',
+            totalLines,
+            truncated: true,
+          };
+        }
+        
+        return { success: true, content, totalLines };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    },
+  }),
+
+  runCommand: tool({
+    description: 'Run a command to verify the code (e.g., tests, type-check, lint)',
+    inputSchema: z.object({
+      command: z.string().describe('The shell command to run'),
+    }),
+    execute: async ({ command }) => {
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          cwd: resolvedDir,
+          timeout: 60000,
+        });
+        return { success: true, output: (stdout + stderr).slice(0, 5000) };
+      } catch (error: any) {
+        return {
+          success: false,
+          error: error.message,
+          stdout: error.stdout?.slice(0, 2000),
+          stderr: error.stderr?.slice(0, 2000),
+        };
+      }
+    },
+  }),
+
+  approveTask: tool({
+    description: 'Approve the task as complete - all success criteria are met',
+    inputSchema: z.object({
+      reason: z.string().describe('Why the task is complete and meets all criteria'),
+    }),
+    execute: async ({ reason }) => {
+      return { approved: true, reason };
+    },
+  }),
+
+  requestChanges: tool({
+    description: 'Request changes - the task is NOT complete or has issues',
+    inputSchema: z.object({
+      issues: z.array(z.string()).describe('List of specific issues that need to be fixed'),
+      suggestions: z.array(z.string()).describe('Specific suggestions for the coding agent'),
+    }),
+    execute: async ({ issues, suggestions }) => {
+      return { approved: false, issues, suggestions };
+    },
+  }),
+};
+
+/**
+ * Run the judge agent to review the work done.
+ */
+async function runJudge(
+  taskPrompt: string,
+  workSummary: string,
+  filesModified: string[]
+): Promise<{ approved: boolean; feedback: string }> {
+  log('  🧑‍⚖️  Judge reviewing...', 'cyan');
+
+  try {
+    const result = await generateText({
+      model: 'anthropic/claude-opus-4.5' as any,
+      tools: judgeTools,
+      toolChoice: 'required',
+      stopWhen: stepCountIs(10),
+      messages: [
+        {
+          role: 'system',
+          content: `You are a code review judge. Your job is to verify that a coding task has been completed correctly.
+
+## Your Process:
+1. Read the task requirements carefully
+2. Review the files that were modified
+3. Run verification commands (tests, type-check, etc.) as specified in the task
+4. Determine if ALL success criteria are met
+
+## Rules:
+- Be thorough but fair
+- Run the verification commands mentioned in the task
+- Check that the code actually implements what was requested
+- If tests fail or there are type errors, request changes
+- Only approve if you're confident the task is truly complete
+
+## Final Action:
+- Use approveTask if everything is correct
+- Use requestChanges if there are issues (be specific about what needs fixing)`,
+        },
+        {
+          role: 'user',
+          content: `## Task Requirements:
+${taskPrompt}
+
+## Work Summary from Coding Agent:
+${workSummary}
+
+## Files Modified:
+${filesModified.length > 0 ? filesModified.join('\n') : 'None reported'}
+
+Please review the work. Check the modified files, run any verification commands mentioned in the task, and either approve or request changes.`,
+        },
+      ],
+    });
+
+    // Find the final verdict from tool calls
+    for (const step of result.steps) {
+      for (const toolResult of step.toolResults) {
+        if (toolResult.toolName === 'approveTask') {
+          const output = toolResult.output as { approved: boolean; reason: string };
+          log('  ✅ Judge approved', 'green');
+          return { approved: true, feedback: output.reason };
+        }
+        if (toolResult.toolName === 'requestChanges') {
+          const output = toolResult.output as { approved: boolean; issues: string[]; suggestions: string[] };
+          log('  ❌ Judge requested changes', 'yellow');
+          const feedback = [
+            'Issues found:',
+            ...output.issues.map(i => `- ${i}`),
+            '',
+            'Suggestions:',
+            ...output.suggestions.map(s => `- ${s}`),
+          ].join('\n');
+          return { approved: false, feedback };
+        }
+      }
+    }
+
+    // No clear verdict - default to not approved
+    return { 
+      approved: false, 
+      feedback: 'Judge did not provide a clear verdict. Please verify your work and try markComplete again.' 
+    };
+  } catch (error) {
+    log(`  ⚠️  Judge error: ${error}`, 'red');
+    // On error, don't block - let the main agent continue
+    return { approved: false, feedback: 'Judge encountered an error. Please verify your work manually.' };
+  }
+}
+
 // Track completion
 let taskComplete = false;
 let taskSummary = '';
+let pendingJudgeReview = false;
+let lastFilesModified: string[] = [];
 
 async function main() {
   log('╔════════════════════════════════════════════════════════════╗', 'magenta');
@@ -741,7 +936,7 @@ Current working directory: ${resolvedDir}`,
 
     stopWhen: iterationCountIs(20),
 
-    verifyCompletion: async ({ result }: VerifyCompletionContext<Tools>) => {
+    verifyCompletion: async ({ result, originalPrompt }: VerifyCompletionContext<Tools>) => {
       // Check if markComplete was called
       for (const step of result.steps) {
         for (const toolResult of step.toolResults) {
@@ -751,17 +946,36 @@ Current working directory: ${resolvedDir}`,
             toolResult.output !== null &&
             'complete' in toolResult.output
           ) {
-            taskComplete = true;
+            pendingJudgeReview = true;
             taskSummary = (toolResult.output as any).summary;
+            lastFilesModified = (toolResult.output as any).filesModified || [];
           }
         }
       }
 
-      if (taskComplete) {
-        return {
-          complete: true,
-          reason: `Task complete: ${taskSummary}`,
-        };
+      // If markComplete was called, run the judge
+      if (pendingJudgeReview) {
+        pendingJudgeReview = false;
+        
+        const judgeResult = await runJudge(
+          originalPrompt,
+          taskSummary,
+          lastFilesModified
+        );
+
+        if (judgeResult.approved) {
+          taskComplete = true;
+          return {
+            complete: true,
+            reason: `Task complete: ${taskSummary}\n\nJudge verdict: ${judgeResult.feedback}`,
+          };
+        } else {
+          // Judge requested changes - feed back to the agent
+          return {
+            complete: false,
+            reason: `The judge reviewed your work and requested changes:\n\n${judgeResult.feedback}\n\nPlease address these issues and use markComplete again when done.`,
+          };
+        }
       }
 
       return {
