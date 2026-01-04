@@ -8,6 +8,7 @@ A code migration agent using RalphLoopAgent that can transform codebases automat
 - Running shell commands from an agent
 - Verification-based completion (migration marked complete)
 - Real-world code transformation workflow
+- Flexible prompt input (CLI arg, file, or auto-detect)
 
 ## Setup
 
@@ -21,12 +22,50 @@ export ANTHROPIC_API_KEY=your_api_key_here
 
 ## Usage
 
-```bash
-# Migrate a codebase
-pnpm start ~/Developer/classnames "Migrate from Node test to Vitest"
+The agent accepts prompts in three ways:
 
-# Or directly with tsx
-npx tsx index.ts /path/to/repo "Your migration task"
+### 1. Auto-detect PROMPT.md in target repo
+
+```bash
+# If ~/Developer/myproject/PROMPT.md exists, it will be used automatically
+pnpm start ~/Developer/myproject
+```
+
+### 2. Provide prompt as CLI argument
+
+```bash
+pnpm start ~/Developer/classnames "Migrate from Node test to Vitest"
+```
+
+### 3. Provide path to a prompt file
+
+```bash
+pnpm start ~/Developer/myproject ./my-migration-prompt.md
+```
+
+## Example PROMPT.md
+
+Create a `PROMPT.md` file in your target repo:
+
+```markdown
+# Migration Task
+
+Migrate this codebase from Node's native test runner to Vitest.
+
+## Requirements
+
+1. Add vitest as a devDependency (check latest version with `npm view vitest version`)
+2. Create vitest.config.ts with appropriate settings
+3. Update test files to use vitest imports (describe, it, expect from 'vitest')
+4. Replace assert.equal() with expect().toBe()
+5. Update package.json test script to use "vitest run"
+6. Run npm install to install new dependencies
+7. Run the tests to verify they pass
+
+## Important
+
+- Always check latest package versions before adding dependencies
+- Start by reading package.json and exploring test files
 ```
 
 ## Example: Node Test → Vitest Migration

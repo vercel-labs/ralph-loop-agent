@@ -6,7 +6,14 @@
  * The agent iteratively modifies files until the migration is verified complete.
  *
  * Usage:
- *   npx tsx index.ts /path/to/repo "Migrate from Node test to Vitest"
+ *   npx tsx index.ts /path/to/repo                    # Uses PROMPT.md in repo
+ *   npx tsx index.ts /path/to/repo "Your prompt"      # Uses provided prompt
+ *   npx tsx index.ts /path/to/repo ./custom-prompt.md # Uses custom prompt file
+ *
+ * The prompt can be:
+ *   1. A PROMPT.md file in the target directory (auto-detected)
+ *   2. A string passed as the second argument
+ *   3. A path to a .md file passed as the second argument
  *
  * Environment:
  *   ANTHROPIC_API_KEY - Your Anthropic API key
@@ -51,15 +58,59 @@ function logSection(title: string) {
 
 // Get CLI arguments
 const targetDir = process.argv[2];
-const migrationTask = process.argv[3] || 'Migrate from Node native test runner to Vitest';
+const promptArg = process.argv[3];
 
 if (!targetDir) {
-  console.error('Usage: npx tsx index.ts <target-directory> [migration-task]');
-  console.error('Example: npx tsx index.ts ~/Developer/classnames "Migrate to Vitest"');
+  console.error('Usage: npx tsx index.ts <target-directory> [prompt or prompt-file]');
+  console.error('');
+  console.error('Examples:');
+  console.error('  npx tsx index.ts ~/Developer/myproject                    # Uses PROMPT.md in repo');
+  console.error('  npx tsx index.ts ~/Developer/myproject "Migrate to Vitest" # Uses provided prompt');
+  console.error('  npx tsx index.ts ~/Developer/myproject ./migration.md      # Uses prompt from file');
   process.exit(1);
 }
 
 const resolvedDir = path.resolve(targetDir.replace('~', process.env.HOME || ''));
+
+/**
+ * Get the migration prompt from various sources:
+ * 1. CLI argument (string or path to .md file)
+ * 2. PROMPT.md in the target directory
+ * 3. Default fallback
+ */
+async function getMigrationPrompt(): Promise<{ prompt: string; source: string }> {
+  // If a prompt argument was provided
+  if (promptArg) {
+    // Check if it's a path to a .md file
+    if (promptArg.endsWith('.md')) {
+      const promptPath = path.resolve(promptArg.replace('~', process.env.HOME || ''));
+      try {
+        const content = await fs.readFile(promptPath, 'utf-8');
+        return { prompt: content.trim(), source: promptPath };
+      } catch {
+        // If file doesn't exist, treat it as a literal string
+        return { prompt: promptArg, source: 'CLI argument' };
+      }
+    }
+    // It's a literal prompt string
+    return { prompt: promptArg, source: 'CLI argument' };
+  }
+
+  // Check for PROMPT.md in target directory
+  const promptMdPath = path.join(resolvedDir, 'PROMPT.md');
+  try {
+    const content = await fs.readFile(promptMdPath, 'utf-8');
+    return { prompt: content.trim(), source: promptMdPath };
+  } catch {
+    // No PROMPT.md found
+  }
+
+  // Default fallback
+  return {
+    prompt: 'Analyze this codebase and suggest improvements or migrations that could be made.',
+    source: 'default',
+  };
+}
 
 // Define tools for the migration agent
 const tools = {
@@ -183,10 +234,6 @@ async function main() {
   log('║         Ralph Wiggum Agent - Code Migration                ║', 'magenta');
   log('╚════════════════════════════════════════════════════════════╝', 'magenta');
 
-  logSection('Configuration');
-  log(`Target: ${resolvedDir}`, 'bright');
-  log(`Task: ${migrationTask}`, 'bright');
-
   // Verify directory exists
   try {
     await fs.access(resolvedDir);
@@ -194,6 +241,20 @@ async function main() {
     log(`Error: Directory does not exist: ${resolvedDir}`, 'red');
     process.exit(1);
   }
+
+  // Get the migration prompt
+  const { prompt: migrationPrompt, source: promptSource } = await getMigrationPrompt();
+
+  logSection('Configuration');
+  log(`Target: ${resolvedDir}`, 'bright');
+  log(`Prompt source: ${promptSource}`, 'dim');
+  
+  logSection('Task');
+  // Show first 500 chars of prompt, or full if shorter
+  const promptPreview = migrationPrompt.length > 500 
+    ? migrationPrompt.slice(0, 500) + '...' 
+    : migrationPrompt;
+  log(promptPreview, 'bright');
 
   const agent = new RalphLoopAgent({
     model: 'anthropic/claude-opus-4.5' as any,
@@ -274,21 +335,7 @@ Current working directory: ${resolvedDir}`,
 
   try {
     const result = await agent.loop({
-      prompt: `Migrate this codebase: ${migrationTask}
-
-Key requirements for Node test → Vitest migration:
-1. FIRST: Run "npm view vitest version" to get the latest version
-2. Add vitest with the LATEST version as a devDependency (use the exact version from npm view)
-3. Create vitest.config.ts with appropriate settings
-4. Update test files to use vitest imports (describe, it, expect from 'vitest')
-5. Replace assert.equal() with expect().toBe() or expect().toEqual()
-6. Update package.json test script to use "vitest run"
-7. Run npm install to install new dependencies
-8. Run the tests to verify they pass
-
-IMPORTANT: Always check latest package versions with "npm view <package> version" before adding dependencies!
-
-Start by reading package.json and exploring the test files.`,
+      prompt: migrationPrompt,
     });
 
     const totalDuration = Date.now() - startTime;
