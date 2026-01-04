@@ -23,6 +23,9 @@
  *   SANDBOX_VERCEL_PROJECT_ID - Vercel project ID
  */
 
+// Load environment variables from .env file
+import 'dotenv/config';
+
 import { RalphLoopAgent, iterationCountIs, type VerifyCompletionContext } from 'ralph-wiggum';
 import * as fs from 'fs/promises';
 import * as path from 'path';

@@ -20,6 +20,9 @@ importers:
       ai:
         specifier: ^6.0.0
         version: 6.0.6(zod@4.3.4)
+      dotenv:
+        specifier: ^17.2.3
+        version: 17.2.3
       prompts:
         specifier: ^2.4.2
         version: 2.4.2
@@ -439,6 +442,10 @@ packages:
   chai@6.2.2:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
     engines: {node: '>=18'}
+
+  dotenv@17.2.3:
+    resolution: {integrity: sha512-JVUnt+DUIzu87TABbhPmNfVdBDt18BLOWjMUFJMSi/Qqg7NTYtabbvSNJGOJ7afbRuv9D/lngizHtP7QyLQ+9w==}
+    engines: {node: '>=12'}
 
   es-module-lexer@1.7.0:
     resolution: {integrity: sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==}
@@ -973,6 +980,8 @@ snapshots:
   bare-events@2.8.2: {}
 
   chai@6.2.2: {}
+
+  dotenv@17.2.3: {}
 
   es-module-lexer@1.7.0: {}
 
