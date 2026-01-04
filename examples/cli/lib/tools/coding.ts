@@ -236,10 +236,10 @@ export function createCodingAgentTools() {
           // Wait a moment for server to start
           await new Promise(resolve => setTimeout(resolve, 3000));
           
-          log(`  🚀 Dev server starting at https://${sandboxDomain}`, 'green');
+          log(`  🚀 Dev server starting at ${sandboxDomain}`, 'green');
           return { 
             success: true, 
-            url: `https://${sandboxDomain}`,
+            url: sandboxDomain,
             command: startCmd,
             logFile: '/tmp/server.log',
           };

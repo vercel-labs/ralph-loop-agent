@@ -93,7 +93,7 @@ export function createJudgeTools() {
       }),
       execute: async ({ path }) => {
         try {
-          const url = `https://${sandboxDomain}${path || '/'}`;
+          const url = `${sandboxDomain}${path || '/'}`;
           const result = await runInSandbox(`curl -s "${url}"`);
           return { success: true, response: result.stdout.slice(0, 5000) };
         } catch (error) {

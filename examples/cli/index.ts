@@ -176,7 +176,7 @@ Then use that exact version. NEVER guess or use outdated versions.
 - Be thorough but efficient
 - You can start a dev server with startDevServer and test it with curl
 
-Sandbox dev server URL: https://${sandboxDomain}`;
+Sandbox dev server URL: ${sandboxDomain}`;
 
   const instructions = agentsMd 
     ? `${baseInstructions}\n\n## Project-Specific Instructions (from AGENTS.md)\n\n${agentsMd}`
@@ -266,7 +266,7 @@ Sandbox dev server URL: https://${sandboxDomain}`;
 
   logSection('Starting Task');
   log('The agent will iterate until the task is complete...', 'dim');
-  log(`Dev server URL: https://${sandboxDomain}`, 'blue');
+  log(`Dev server URL: ${sandboxDomain}`, 'blue');
 
   const startTime = Date.now();
 

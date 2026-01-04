@@ -49,7 +49,7 @@ export async function initializeSandbox(localDir: string): Promise<void> {
 
   sandboxDomain = sandbox.domain(3000);
   log(`  ✓ Sandbox created (${sandbox.sandboxId})`, 'green');
-  log(`  📡 Dev server URL: https://${sandboxDomain}`, 'dim');
+  log(`  📡 Dev server URL: ${sandboxDomain}`, 'dim');
 
   // Copy files from local directory to sandbox
   await copyLocalToSandbox(localDir);
