@@ -5,6 +5,7 @@
 import { Sandbox } from '@vercel/sandbox';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import ignore, { Ignore } from 'ignore';
 import { log } from './logger.js';
 import { SANDBOX_TIMEOUT_MS } from './constants.js';
 
@@ -32,6 +33,61 @@ export async function streamToString(stream: NodeJS.ReadableStream): Promise<str
 }
 
 /**
+ * Load all .gitignore files from a directory tree and create an ignore instance
+ */
+async function loadGitignore(rootDir: string): Promise<Ignore> {
+  const ig = ignore();
+  
+  // Always ignore these regardless of .gitignore
+  ig.add([
+    '.git',
+    'node_modules',
+  ]);
+
+  // Recursively find and load all .gitignore files
+  async function loadFromDir(dir: string, prefix = ''): Promise<void> {
+    try {
+      const gitignorePath = path.join(dir, '.gitignore');
+      try {
+        const content = await fs.readFile(gitignorePath, 'utf-8');
+        // Adjust patterns for nested .gitignore files
+        const patterns = content
+          .split('\n')
+          .filter(line => line.trim() && !line.startsWith('#'))
+          .map(pattern => {
+            // If we're in a subdirectory, prefix the patterns
+            if (prefix) {
+              // Handle negation patterns
+              if (pattern.startsWith('!')) {
+                return '!' + prefix + '/' + pattern.slice(1);
+              }
+              return prefix + '/' + pattern;
+            }
+            return pattern;
+          });
+        ig.add(patterns);
+      } catch {
+        // No .gitignore in this directory
+      }
+
+      // Check subdirectories for nested .gitignore files
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name !== '.git' && entry.name !== 'node_modules') {
+          const subPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+          await loadFromDir(path.join(dir, entry.name), subPrefix);
+        }
+      }
+    } catch {
+      // Directory doesn't exist or isn't readable
+    }
+  }
+
+  await loadFromDir(rootDir);
+  return ig;
+}
+
+/**
  * Initialize the sandbox and copy files from local directory
  */
 export async function initializeSandbox(localDir: string): Promise<void> {
@@ -56,10 +112,13 @@ export async function initializeSandbox(localDir: string): Promise<void> {
 }
 
 /**
- * Copy files from local directory to sandbox
+ * Copy files from local directory to sandbox (respects .gitignore)
  */
 async function copyLocalToSandbox(localDir: string): Promise<void> {
   log('  📦 Copying project files to sandbox...', 'cyan');
+  
+  // Load gitignore rules
+  const ig = await loadGitignore(localDir);
   
   const filesToCopy: { path: string; content: Buffer }[] = [];
   
@@ -71,8 +130,10 @@ async function copyLocalToSandbox(localDir: string): Promise<void> {
         const localPath = path.join(dir, entry.name);
         const sandboxPath = prefix ? `${prefix}/${entry.name}` : entry.name;
         
-        // Skip node_modules, .git, and other large directories
-        if (['node_modules', '.git', 'dist', '.next', 'build', '.cache'].includes(entry.name)) {
+        // Check if path is ignored by .gitignore
+        // For directories, add trailing slash for proper matching
+        const checkPath = entry.isDirectory() ? sandboxPath + '/' : sandboxPath;
+        if (ig.ignores(checkPath)) {
           continue;
         }
         
@@ -111,10 +172,88 @@ async function copyLocalToSandbox(localDir: string): Promise<void> {
 }
 
 /**
- * Copy files from sandbox back to local directory
+ * Load gitignore from sandbox and create ignore instance
+ */
+async function loadSandboxGitignore(): Promise<Ignore> {
+  const ig = ignore();
+  
+  // Always ignore these regardless of .gitignore
+  ig.add([
+    '.git',
+    'node_modules',
+  ]);
+
+  // Try to read .gitignore from sandbox root
+  try {
+    const stream = await sandbox!.readFile({ path: '.gitignore' });
+    if (stream) {
+      const content = await streamToString(stream);
+      const patterns = content
+        .split('\n')
+        .filter(line => line.trim() && !line.startsWith('#'));
+      ig.add(patterns);
+    }
+  } catch {
+    // No .gitignore in sandbox
+  }
+
+  // Also try to find nested .gitignore files
+  try {
+    const cmd = await sandbox!.runCommand({
+      cmd: 'find',
+      args: ['.', '-name', '.gitignore', '-not', '-path', './node_modules/*', '-not', '-path', './.git/*'],
+      detached: true,
+    });
+    
+    let stdout = '';
+    try {
+      for await (const logEntry of cmd.logs()) {
+        if (logEntry.stream === 'stdout') stdout += logEntry.data;
+      }
+    } catch {
+      // Ignore streaming errors
+    }
+    await cmd.wait();
+
+    const gitignoreFiles = stdout.split('\n').filter(f => f.trim() && f !== './.gitignore');
+    
+    for (const gitignorePath of gitignoreFiles) {
+      try {
+        const relativePath = gitignorePath.replace(/^\.\//, '').replace('/.gitignore', '');
+        const stream = await sandbox!.readFile({ path: gitignorePath.replace(/^\.\//, '') });
+        if (stream) {
+          const content = await streamToString(stream);
+          const patterns = content
+            .split('\n')
+            .filter(line => line.trim() && !line.startsWith('#'))
+            .map(pattern => {
+              // Prefix patterns with the directory they're in
+              if (pattern.startsWith('!')) {
+                return '!' + relativePath + '/' + pattern.slice(1);
+              }
+              return relativePath + '/' + pattern;
+            });
+          ig.add(patterns);
+        }
+      } catch {
+        // Skip unreadable .gitignore files
+      }
+    }
+  } catch {
+    // Ignore errors finding nested .gitignore files
+  }
+
+  return ig;
+}
+
+/**
+ * Copy files from sandbox back to local directory (respects .gitignore)
  */
 async function copySandboxToLocal(localDir: string): Promise<void> {
   log('  📦 Copying changes back to local...', 'cyan');
+  
+  // Load gitignore rules from sandbox
+  const ig = await loadSandboxGitignore();
   
   // Get list of files in sandbox
   const cmd = await sandbox!.runCommand({
@@ -135,9 +274,17 @@ async function copySandboxToLocal(localDir: string): Promise<void> {
 
   const files = stdout.split('\n').filter(f => f.trim() && f !== '.');
   let copiedCount = 0;
+  let skippedCount = 0;
 
   for (const file of files) {
     const sandboxPath = file.replace(/^\.\//, '');
+    
+    // Check if file is ignored by .gitignore
+    if (ig.ignores(sandboxPath)) {
+      skippedCount++;
+      continue;
+    }
+    
     const localPath = path.join(localDir, sandboxPath);
     
     try {
@@ -153,7 +300,7 @@ async function copySandboxToLocal(localDir: string): Promise<void> {
     }
   }
 
-  log(`  ✓ Copied ${copiedCount} files back to local`, 'green');
+  log(`  ✓ Copied ${copiedCount} files back to local${skippedCount > 0 ? ` (${skippedCount} ignored)` : ''}`, 'green');
 }
 
 /**
