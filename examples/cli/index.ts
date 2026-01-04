@@ -163,59 +163,112 @@ const interviewerTools = {
   }),
 };
 
+// Cache for codebase analysis (explored once, reused for all questions)
+let codebaseAnalysis: string | null = null;
+
 /**
- * Use an AI agent to explore the codebase and generate contextual suggestions.
+ * Explore the codebase once and cache the analysis.
  */
-async function generateSuggestions(
-  question: string,
-  context: { taskType: string; title: string; techStack?: string }
-): Promise<string[]> {
+async function exploreCodebase(taskType: string, title: string, techStack?: string): Promise<string> {
+  if (codebaseAnalysis) {
+    return codebaseAnalysis;
+  }
+
+  log('  🔍 AI exploring codebase...', 'cyan');
+
   try {
     const result = await generateText({
       model: 'anthropic/claude-opus-4.5' as any,
       tools: interviewerTools,
-      toolChoice: 'required',
-      stopWhen: stepCountIs(8),
+      stopWhen: stepCountIs(15),
       messages: [
         {
           role: 'system',
-          content: `You are helping a developer define a coding task. Your job is to:
+          content: `You are analyzing a codebase to help define a coding task. Explore the project thoroughly.
 
-1. FIRST: Explore the codebase to understand it (list files, read key files like package.json, README, etc.)
-2. THEN: Provide 3 specific, actionable suggestions for the question
+## Process:
+1. Call listDirectory to see the project structure
+2. Call readFile on package.json if it exists
+3. Read README.md if it exists
+4. List key directories (src/, app/, components/, etc.)
+5. Read a few important files to understand the architecture
 
-Be efficient - read only what you need to give good suggestions.
-End by calling provideSuggestions with exactly 3 suggestions based on what you learned.`,
+At the end, provide a comprehensive summary of what you found.`,
         },
         {
           role: 'user',
-          content: `Task type: ${context.taskType}
-Title: ${context.title}
-${context.techStack ? `Tech stack: ${context.techStack}` : ''}
+          content: `I want to: ${title} (${taskType})
+${techStack ? `Tech stack: ${techStack}` : ''}
 
-Question I need suggestions for: "${question}"
-
-Explore the codebase, then call provideSuggestions with 3 specific suggestions.`,
+Please explore this codebase and give me a summary of:
+- What kind of project this is
+- Key technologies/frameworks used
+- Important directories and files
+- Current architecture/patterns`,
         },
       ],
     });
 
-    // Find the suggestions from tool calls
+    // Count tool calls for logging
+    let toolCallCount = 0;
     for (const step of result.steps) {
-      for (const toolResult of step.toolResults) {
-        if (toolResult.toolName === 'provideSuggestions') {
-          const output = toolResult.output as { suggestions: string[] };
-          if (output.suggestions?.length >= 2) {
-            return output.suggestions.slice(0, 3);
-          }
-        }
-      }
+      toolCallCount += step.toolResults.length;
     }
+    log(`     ✓ Explored (${toolCallCount} files/dirs checked)`, 'dim');
 
-    // Fallback
-    return ['Start with the main entry point', 'Focus on core functionality', 'Address one component at a time'];
+    codebaseAnalysis = result.text || 'Unable to analyze codebase';
+    return codebaseAnalysis;
   } catch (error) {
-    return ['Start with the basics', 'Focus on core functionality', 'Take an incremental approach'];
+    log(`     ⚠️ Error exploring: ${error}`, 'yellow');
+    codebaseAnalysis = 'New or empty project';
+    return codebaseAnalysis;
+  }
+}
+
+/**
+ * Generate suggestions for a question using cached codebase analysis.
+ */
+async function generateSuggestions(
+  question: string,
+  context: { taskType: string; title: string; techStack?: string; codebaseAnalysis: string }
+): Promise<string[]> {
+  try {
+    const result = await generateText({
+      model: 'anthropic/claude-opus-4.5' as any,
+      messages: [
+        {
+          role: 'system',
+          content: `Generate SHORT, DISTINCT suggestions for a coding task question.
+
+Rules:
+- Each suggestion must be DIFFERENT (not variations of the same idea)
+- Keep each under 15 words
+- Focus on WHAT to achieve, not HOW to implement
+- Only include suggestions that genuinely make sense for this project
+- Return 1-5 suggestions based on what's relevant (don't force a number)
+- One suggestion per line, no bullets or numbers`,
+        },
+        {
+          role: 'user',
+          content: `Task: ${context.title}
+
+Project: ${context.codebaseAnalysis.slice(0, 1500)}
+
+Question: ${question}`,
+        },
+      ],
+      maxOutputTokens: 250,
+    });
+
+    const suggestions = result.text
+      .split('\n')
+      .map(s => s.replace(/^[\d\-\*\.\)]+\s*/, '').trim())
+      .filter(s => s.length > 5 && s.length < 120)
+      .slice(0, 5);
+
+    return suggestions.length > 0 ? suggestions : ['Define the core requirement'];
+  } catch (error) {
+    return ['Define the core requirement'];
   }
 }
 
@@ -225,10 +278,9 @@ Explore the codebase, then call provideSuggestions with 3 specific suggestions.`
 async function selectWithAI(
   message: string,
   aiQuestion: string,
-  context: { taskType: string; title: string; techStack?: string },
+  context: { taskType: string; title: string; techStack?: string; codebaseAnalysis: string },
   onCancel: () => void
 ): Promise<string> {
-  log('  🔍 AI exploring codebase...', 'dim');
   const suggestions = await generateSuggestions(aiQuestion, context);
   
   const choices = [
@@ -321,35 +373,27 @@ async function runInterview(): Promise<{ prompt: string; saveToFile: boolean }> 
     techStack = stack;
   }
 
-  // Context for the AI interviewer
-  const aiContext = { taskType, title, techStack };
+  // Explore codebase ONCE at the start
+  const analysis = await exploreCodebase(taskType, title, techStack);
+  const aiContext = { taskType, title, techStack, codebaseAnalysis: analysis };
 
-  // Step 3: Description (AI-suggested)
-  const description = await selectWithAI(
-    'What needs to be done?',
-    'What specific work needs to be done for this task? Be concrete and actionable.',
+  // Step 3: Goal (AI-suggested) - high level, what to achieve
+  const goal = await selectWithAI(
+    'What is the goal?',
+    'What is the high-level outcome or goal? Focus on WHAT, not how.',
     aiContext,
     onCancel
   );
 
-  // Step 4: Context (AI-suggested)
-  const context = await selectWithAI(
-    'What context is important?',
-    'What technical context, constraints, or considerations are important for this task?',
+  // Step 4: Requirements (AI-suggested) - key requirements
+  const requirements = await selectWithAI(
+    'Any specific requirements?',
+    'What specific requirements or constraints should be met?',
     aiContext,
     onCancel
   );
 
-  // Step 5: Focus areas (AI-suggested)
-  const focusAreasStr = await selectWithAI(
-    'Where should the agent focus?',
-    'What specific files, directories, or areas of the codebase should be the focus?',
-    aiContext,
-    onCancel
-  );
-  const focusAreas = focusAreasStr.split(',').map(s => s.trim()).filter(Boolean);
-
-  // Step 6: Verification (user-defined multiselect - keeping as is)
+  // Step 5: Verification (user-defined multiselect - keeping as is)
   const { verification } = await prompts({
     type: 'multiselect',
     name: 'verification',
@@ -359,10 +403,10 @@ async function runInterview(): Promise<{ prompt: string; saveToFile: boolean }> 
     instructions: false,
   }, { onCancel });
 
-  // Step 7: Success criteria (AI-suggested)
+  // Step 6: Success criteria (AI-suggested) - what does done look like
   const successCriteria = await selectWithAI(
-    'What does success look like?',
-    'What are the specific success criteria? How will we know the task is complete?',
+    'What does done look like?',
+    'How will we know this is complete? What is the definition of done?',
     aiContext,
     onCancel
   );
@@ -375,14 +419,18 @@ async function runInterview(): Promise<{ prompt: string; saveToFile: boolean }> 
     initial: true,
   }, { onCancel });
 
-  const response = { taskType, title, techStack, description, context, focusAreas, verification, successCriteria, saveToFile };
+  const response = { taskType, title, techStack, goal, requirements, verification, successCriteria, saveToFile };
 
   // Build the prompt markdown
   const promptLines: string[] = [];
   
   promptLines.push(`# ${response.title}`);
-  promptLines.push('');
-  promptLines.push(response.description);
+  
+  if (response.goal) {
+    promptLines.push('');
+    promptLines.push('## Goal');
+    promptLines.push(response.goal);
+  }
 
   if (response.techStack) {
     promptLines.push('');
@@ -390,20 +438,10 @@ async function runInterview(): Promise<{ prompt: string; saveToFile: boolean }> 
     promptLines.push(response.techStack);
   }
   
-  if (response.context) {
+  if (response.requirements) {
     promptLines.push('');
-    promptLines.push('## Context');
-    promptLines.push(response.context);
-  }
-
-  if (response.focusAreas && response.focusAreas.length > 0 && response.focusAreas[0] !== '') {
-    promptLines.push('');
-    promptLines.push('## Focus Areas');
-    for (const area of response.focusAreas) {
-      if (area.trim()) {
-        promptLines.push(`- ${area.trim()}`);
-      }
-    }
+    promptLines.push('## Requirements');
+    promptLines.push(response.requirements);
   }
 
   if (response.verification && response.verification.length > 0) {
