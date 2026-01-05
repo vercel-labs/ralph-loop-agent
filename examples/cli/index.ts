@@ -101,7 +101,6 @@ let lastFilesModified: string[] = [];
 // Track sandbox state for cleanup
 let sandboxInitialized = false;
 let isCleaningUp = false;
-let lastCtrlC = 0;
 let interruptPending = false;
 let interruptResolver: ((action: 'continue' | 'followup' | 'save' | 'quit') => void) | null = null;
 let followUpPrompt = '';
@@ -162,6 +161,11 @@ async function showInterruptMenu(): Promise<'continue' | 'followup' | 'save' | '
       { title: 'Save & exit', description: 'Copy files back and exit', value: 'save' },
       { title: 'Quit', description: 'Exit WITHOUT saving changes', value: 'quit' },
     ],
+  }, {
+    onCancel: () => {
+      // Don't exit on Ctrl+C during menu, just return continue
+      return false;
+    }
   });
   
   if (action === 'followup') {
@@ -169,6 +173,8 @@ async function showInterruptMenu(): Promise<'continue' | 'followup' | 'save' | '
       type: 'text',
       name: 'message',
       message: 'Enter your follow-up message:',
+    }, {
+      onCancel: () => false
     });
     followUpPrompt = message || '';
     if (!followUpPrompt) {
@@ -179,35 +185,44 @@ async function showInterruptMenu(): Promise<'continue' | 'followup' | 'save' | '
   return action || 'continue';
 }
 
-// Handle Ctrl+C (SIGINT)
-process.on('SIGINT', async () => {
-  const now = Date.now();
-  
-  // Double Ctrl+C within 1 second = force quit
-  if (now - lastCtrlC < 1000) {
+// SIGINT handling - track count instead of timing to avoid race conditions
+let menuCtrlCCount = 0;
+
+const menuSigintHandler = () => {
+  menuCtrlCCount++;
+  if (menuCtrlCCount >= 2) {
     log('\n\n  [!] Force quit', 'red');
     process.exit(130);
   }
-  lastCtrlC = now;
-  
-  // If we're already showing the menu, ignore
+  log('\n  [!] Press Ctrl+C again to force quit', 'yellow');
+};
+
+const mainSigintHandler = async () => {
   if (interruptPending) {
-    log('\n  [!] Press Ctrl+C again to force quit', 'yellow');
+    menuSigintHandler();
     return;
   }
   
   interruptPending = true;
+  menuCtrlCCount = 0;
+  
+  // Swap to menu handler while menu is showing
+  process.removeListener('SIGINT', mainSigintHandler);
+  process.on('SIGINT', menuSigintHandler);
   
   try {
     const action = await showInterruptMenu();
     interruptPending = false;
+    
+    // Restore main handler
+    process.removeListener('SIGINT', menuSigintHandler);
+    process.on('SIGINT', mainSigintHandler);
     
     if (action === 'quit') {
       await cleanup(130);
     } else if (action === 'save') {
       await saveAndCleanup(0);
     } else if (action === 'continue' || action === 'followup') {
-      // Resume - if there's a resolver waiting, call it
       if (interruptResolver) {
         interruptResolver(action);
         interruptResolver = null;
@@ -215,11 +230,14 @@ process.on('SIGINT', async () => {
       log('  [>] Resuming...', 'green');
     }
   } catch {
-    // prompts was cancelled, just continue
     interruptPending = false;
+    process.removeListener('SIGINT', menuSigintHandler);
+    process.on('SIGINT', mainSigintHandler);
     log('  [>] Resuming...', 'green');
   }
-});
+};
+
+process.on('SIGINT', mainSigintHandler);
 
 process.on('SIGTERM', () => {
   log('\n\n  [!] Terminated', 'yellow');
