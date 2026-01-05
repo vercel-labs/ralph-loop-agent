@@ -731,6 +731,12 @@ Sandbox dev server URL: ${sandboxDomain}`;
       log(`      Steps: ${result.steps.length}`, 'dim');
       log(`      result.usage: in=${result.usage.inputTokens}, out=${result.usage.outputTokens}`, 'dim');
       
+      // Check if cache details exist at result level
+      const resultCache = result.usage.inputTokenDetails;
+      if (resultCache) {
+        log(`      result.cache: read=${resultCache.cacheReadTokens ?? 0}, write=${resultCache.cacheWriteTokens ?? 0}`, 'dim');
+      }
+      
       let stepInputSum = 0;
       let stepOutputSum = 0;
       let cacheReadSum = 0;
@@ -744,9 +750,7 @@ Sandbox dev server URL: ${sandboxDomain}`;
         }
       }
       log(`      step sum: in=${stepInputSum}, out=${stepOutputSum}`, 'dim');
-      if (cacheReadSum > 0 || cacheWriteSum > 0) {
-        log(`      cache: read=${cacheReadSum}, write=${cacheWriteSum}`, 'dim');
-      }
+      log(`      step cache: read=${cacheReadSum}, write=${cacheWriteSum}`, 'dim');
       
       // Aggregate usage from all steps for accurate token counts
       const iterationUsage = aggregateStepUsage(result);
