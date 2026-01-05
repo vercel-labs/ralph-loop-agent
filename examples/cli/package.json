@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx index.ts",
+    "cli": "tsx index.ts",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

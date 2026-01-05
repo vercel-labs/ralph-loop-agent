@@ -38,22 +38,46 @@ import { initializeSandbox, closeSandbox, readFromSandbox, getSandboxDomain } fr
 import { getTaskPrompt, runInterviewAndGetPrompt } from './lib/interview.js';
 import { createCodingAgentTools, type CodingTools } from './lib/tools/coding.js';
 import { runJudge } from './lib/judge.js';
+import { 
+  isGitHubUrl, 
+  parseGitHubUrl, 
+  getTaskDir, 
+  cloneRepo, 
+  createPullRequestWorkflow 
+} from './lib/git.js';
 
 // Get CLI arguments
-const targetDir = process.argv[2];
+const targetArg = process.argv[2];
 const promptArg = process.argv[3];
 
-if (!targetDir) {
-  console.error('Usage: npx tsx index.ts <target-directory> [prompt or prompt-file]');
+if (!targetArg) {
+  console.error('Usage: npx tsx index.ts <target-directory-or-repo> [prompt or prompt-file]');
   console.error('');
   console.error('Examples:');
-  console.error('  npx tsx index.ts ~/Developer/myproject                     # Interactive mode');
-  console.error('  npx tsx index.ts ~/Developer/myproject "Add TypeScript"    # Uses provided prompt');
-  console.error('  npx tsx index.ts ~/Developer/myproject ./task.md           # Uses prompt from file');
+  console.error('  npx tsx index.ts ~/Developer/myproject                     # Local directory');
+  console.error('  npx tsx index.ts https://github.com/owner/repo             # Clone from GitHub');
+  console.error('  npx tsx index.ts ~/Developer/myproject "Add TypeScript"    # With prompt');
+  console.error('  npx tsx index.ts ~/Developer/myproject ./task.md           # With prompt file');
   process.exit(1);
 }
 
-const resolvedDir = path.resolve(targetDir.replace('~', process.env.HOME || ''));
+// Detect if target is a GitHub URL or local path
+const isRepoUrl = isGitHubUrl(targetArg);
+let resolvedDir: string;
+let repoInfo: { owner: string; repo: string; url: string } | null = null;
+
+if (isRepoUrl) {
+  const parsed = parseGitHubUrl(targetArg);
+  if (!parsed) {
+    console.error(`Error: Could not parse GitHub URL: ${targetArg}`);
+    process.exit(1);
+  }
+  repoInfo = { ...parsed, url: targetArg };
+  // Will be set after cloning
+  resolvedDir = '';
+} else {
+  resolvedDir = path.resolve(targetArg.replace('~', process.env.HOME || ''));
+}
 
 // Check required env vars
 const requiredEnvVars = ['SANDBOX_VERCEL_TOKEN', 'SANDBOX_VERCEL_TEAM_ID', 'SANDBOX_VERCEL_PROJECT_ID'];
@@ -244,39 +268,57 @@ async function main() {
   log('║         Ralph CLI Example - Autonomous Coding Agent        ║', 'magenta');
   log('╚════════════════════════════════════════════════════════════╝', 'magenta');
 
-  // Check if local directory exists, offer to create if not
-  try {
-    await fs.access(resolvedDir);
-  } catch {
-    const { createDir } = await prompts({
-      type: 'confirm',
-      name: 'createDir',
-      message: `Directory does not exist: ${resolvedDir}\n  Create it?`,
-      initial: true,
-    });
+  logSection('Configuration');
+  
+  if (repoInfo) {
+    // GitHub repo mode
+    log(`Repository: ${repoInfo.url}`, 'bright');
+    log(`  [i] Repo will be cloned when task starts`, 'dim');
+    log(`  [i] Changes will create a PR when complete`, 'dim');
+    // Set a placeholder - will be updated after cloning
+    resolvedDir = getTaskDir(repoInfo.owner, repoInfo.repo);
+    log(`  [i] Task dir: ${resolvedDir}`, 'dim');
+  } else {
+    // Local directory mode
+    // Check if local directory exists, offer to create if not
+    try {
+      await fs.access(resolvedDir);
+    } catch {
+      const { createDir } = await prompts({
+        type: 'confirm',
+        name: 'createDir',
+        message: `Directory does not exist: ${resolvedDir}\n  Create it?`,
+        initial: true,
+      });
 
-    if (!createDir) {
-      log('Cancelled.', 'yellow');
-      process.exit(0);
+      if (!createDir) {
+        log('Cancelled.', 'yellow');
+        process.exit(0);
+      }
+
+      await fs.mkdir(resolvedDir, { recursive: true });
+      log(`  [+] Created ${resolvedDir}`, 'green');
     }
-
-    await fs.mkdir(resolvedDir, { recursive: true });
-    log(`  [+] Created ${resolvedDir}`, 'green');
+    
+    log(`Local target: ${resolvedDir}`, 'bright');
+    log(`  [!] All code runs in an isolated sandbox`, 'yellow');
+    log(`      Changes will be copied back when complete`, 'dim');
   }
 
-  logSection('Configuration');
-  log(`Local target: ${resolvedDir}`, 'bright');
-  log(`  [!] All code runs in an isolated sandbox`, 'yellow');
-  log(`      Changes will be copied back when complete`, 'dim');
+  // Clone repo early if using GitHub URL (needed for PROMPT.md check and Plan Mode)
+  if (repoInfo) {
+    logSection('Cloning Repository');
+    await cloneRepo(repoInfo.url, resolvedDir);
+  }
 
-  // Get the task prompt from local directory (before creating sandbox)
+  // Get the task prompt (works the same for local path or cloned repo)
   let taskPrompt: string;
   let promptSource: string;
 
-  const promptResult = await getTaskPrompt(promptArg, resolvedDir);
-
   // Track if user already confirmed via Plan Mode approval
   let alreadyConfirmed = false;
+
+  const promptResult = await getTaskPrompt(promptArg, resolvedDir);
 
   if ('needsInterview' in promptResult) {
     // Interview mode now uses just-bash with OverlayFs for read-only exploration
@@ -517,6 +559,30 @@ Sandbox dev server URL: ${sandboxDomain}`;
 
     logSection('Final Notes');
     console.log(result.text);
+
+    // For repo mode: create PR after successful completion
+    if (repoInfo && result.completionReason === 'verified' && taskSummary) {
+      // Close sandbox first to copy files back
+      await closeSandbox(resolvedDir);
+      sandboxInitialized = false;
+      
+      // Create PR workflow (on host, not sandbox)
+      try {
+        const { branchName, prUrl } = await createPullRequestWorkflow(
+          resolvedDir,
+          taskPrompt,
+          taskSummary
+        );
+        
+        if (prUrl) {
+          logSection('Pull Request');
+          log(`Branch: ${branchName}`, 'blue');
+          log(`PR: ${prUrl}`, 'green');
+        }
+      } catch (error) {
+        log(`  [!] Failed to create PR: ${error}`, 'yellow');
+      }
+    }
 
   } catch (error) {
     logSection('Error');
