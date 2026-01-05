@@ -79,6 +79,15 @@ let runningUsage: LanguageModelUsage = {
   inputTokens: 0,
   outputTokens: 0,
   totalTokens: 0,
+  inputTokenDetails: {
+    noCacheTokens: undefined,
+    cacheReadTokens: undefined,
+    cacheWriteTokens: undefined,
+  },
+  outputTokenDetails: {
+    textTokens: undefined,
+    reasoningTokens: undefined,
+  },
 };
 
 const AGENT_MODEL = 'anthropic/claude-opus-4.5';
@@ -116,7 +125,6 @@ async function main() {
   // Get the task prompt from local directory (before creating sandbox)
   let taskPrompt: string;
   let promptSource: string;
-  let sandboxCreatedForInterview = false;
 
   const promptResult = await getTaskPrompt(promptArg, resolvedDir);
 
@@ -124,13 +132,18 @@ async function main() {
   let alreadyConfirmed = false;
 
   if ('needsInterview' in promptResult) {
-    // Interview mode needs sandbox for codebase exploration
-    // Create sandbox first, then run interview
-    logSection('Sandbox Setup');
-    await initializeSandbox(resolvedDir);
-    sandboxCreatedForInterview = true;
-
-    const interviewResult = await runInterviewAndGetPrompt();
+    // Interview mode now uses just-bash with OverlayFs for read-only exploration
+    // No sandbox needed - it reads directly from the local filesystem
+    const interviewResult = await runInterviewAndGetPrompt(
+      promptResult.localDir,
+      async (filename: string, content: string) => {
+        // Write to local directory during interview phase
+        const pathModule = await import('path');
+        const fsModule = await import('fs/promises');
+        const filePath = pathModule.join(resolvedDir, filename);
+        await fsModule.writeFile(filePath, content, 'utf-8');
+      }
+    );
     taskPrompt = interviewResult.prompt;
     promptSource = interviewResult.source;
     // User already approved in Plan Mode, no need to ask again
@@ -161,18 +174,13 @@ async function main() {
 
     if (!confirmed) {
       log('Cancelled.', 'yellow');
-      if (sandboxCreatedForInterview) {
-        await closeSandbox(resolvedDir);
-      }
       process.exit(0);
     }
   }
 
-  // Create sandbox if not already created (for interview mode)
-  if (!sandboxCreatedForInterview) {
-    logSection('Sandbox Setup');
-    await initializeSandbox(resolvedDir);
-  }
+  // Create sandbox now - only when the actual task begins
+  logSection('Sandbox Setup');
+  await initializeSandbox(resolvedDir);
 
   const sandboxDomain = getSandboxDomain();
 

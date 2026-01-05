@@ -4,6 +4,9 @@
  * Instead of rigid forms, users describe their task naturally.
  * The AI explores the codebase, asks clarifying questions only when needed,
  * and generates an approvable plan.
+ *
+ * Uses just-bash with OverlayFs for read-only codebase exploration,
+ * avoiding the need for a Vercel sandbox during the planning phase.
  */
 
 import { streamText, generateText, stepCountIs } from 'ai';
@@ -12,6 +15,7 @@ import prompts from 'prompts';
 // Message type for conversation history
 type Message = { role: 'user' | 'assistant' | 'system'; content: string };
 import { createInterviewerTools } from './tools/interviewer.js';
+import { createInterviewBash } from './interview-bash.js';
 import { log, colors } from './logger.js';
 
 interface PlanModeResult {
@@ -53,8 +57,10 @@ function handleAIError(error: unknown): never {
 
 /**
  * Run the conversational Plan Mode experience.
+ *
+ * @param localDir - The local directory to explore (uses just-bash with OverlayFs)
  */
-export async function runPlanMode(): Promise<PlanModeResult> {
+export async function runPlanMode(localDir: string): Promise<PlanModeResult> {
   console.log();
   log('╭───────────────────────────────────────────────────────────────╮', 'dim');
   log('│  Plan Mode - Describe your task and I\'ll create a plan       │', 'dim');
@@ -75,9 +81,13 @@ export async function runPlanMode(): Promise<PlanModeResult> {
     validate: (v: string) => v.trim().length > 0 || 'Please describe your task',
   }, { onCancel });
 
+  // Create a read-only bash shell for codebase exploration using just-bash
+  // This avoids needing the Vercel sandbox during the interview phase
+  const interviewBash = createInterviewBash(localDir);
+
   // Conversation history for multi-turn dialogue
   const conversationHistory: Message[] = [];
-  const interviewerTools = createInterviewerTools();
+  const interviewerTools = createInterviewerTools(interviewBash);
 
   // Step 2: AI explores codebase and potentially asks questions
   console.log();

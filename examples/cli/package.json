@@ -8,18 +8,19 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "ralph-loop-agent": "workspace:*",
-    "ai": "^6.0.0",
-    "zod": "^4.0.0",
-    "prompts": "^2.4.2",
     "@vercel/sandbox": "^1.1.2",
+    "ai": "^6.0.0",
     "dotenv": "^17.2.3",
-    "ignore": "^7.0.5"
+    "ignore": "^7.0.5",
+    "just-bash": "1.4.2",
+    "prompts": "^2.4.2",
+    "ralph-loop-agent": "workspace:*",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.4",
-    "typescript": "^5.9.3",
     "@types/node": "^22.15.21",
-    "@types/prompts": "^2.4.9"
+    "@types/prompts": "^2.4.9",
+    "tsx": "^4.19.4",
+    "typescript": "^5.9.3"
   }
 }
