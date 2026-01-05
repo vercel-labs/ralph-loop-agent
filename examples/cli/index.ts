@@ -286,83 +286,104 @@ Generate the revised plan.`,
   return true;
 }
 
-// Show interrupt menu
+// Show interrupt menu using raw stdin for full Ctrl+C control
 async function showInterruptMenu(): Promise<'continue' | 'followup' | 'save' | 'quit'> {
-  console.log('\n');
-  log('  ╔═══════════════════════════════════════╗', 'yellow');
-  log('  ║          INTERRUPTED (Ctrl+C)         ║', 'yellow');
-  log('  ╚═══════════════════════════════════════╝', 'yellow');
-  log('  Press Ctrl+C again within 3s to force quit\n', 'dim');
-  
-  const { action } = await prompts({
-    type: 'select',
-    name: 'action',
-    message: 'What would you like to do?',
-    choices: [
-      { title: 'Continue', description: 'Resume the current task', value: 'continue' },
-      { title: 'Follow up', description: 'Send a message to the agent', value: 'followup' },
-      { title: 'Save & exit', description: 'Copy files back and exit', value: 'save' },
-      { title: 'Quit', description: 'Exit WITHOUT saving changes', value: 'quit' },
-    ],
-  }, {
-    onCancel: () => {
-      // Don't exit on Ctrl+C during menu, just return continue
-      return false;
+  return new Promise((resolve) => {
+    console.log('\n');
+    log('  ╔═══════════════════════════════════════╗', 'yellow');
+    log('  ║          INTERRUPTED (Ctrl+C)         ║', 'yellow');
+    log('  ╚═══════════════════════════════════════╝', 'yellow');
+    log('', 'dim');
+    log('  [1] Continue - Resume the current task', 'bright');
+    log('  [2] Follow up - Send a message to the agent', 'bright');
+    log('  [3] Save & exit - Copy files back and exit', 'bright');
+    log('  [4] Quit - Exit WITHOUT saving changes', 'bright');
+    log('', 'dim');
+    log('  Press 1-4 to select, or Ctrl+C again to force quit\n', 'dim');
+
+    // Set up raw mode to capture individual keypresses
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
     }
+    process.stdin.resume();
+
+    let ctrlCCount = 0;
+
+    const cleanup = () => {
+      process.stdin.removeListener('data', onData);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+    };
+
+    const onData = (key: Buffer) => {
+      const char = key.toString();
+      
+      // Ctrl+C
+      if (char === '\x03') {
+        ctrlCCount++;
+        if (ctrlCCount >= 2) {
+          cleanup();
+          console.log('\n\n  [!] Force quit');
+          process.exit(130);
+        }
+        log('\n  [!] Press Ctrl+C again to force quit', 'yellow');
+        return;
+      }
+      
+      // Reset Ctrl+C count on any other key
+      ctrlCCount = 0;
+      
+      // Number keys
+      if (char === '1' || char === 'c' || char === 'C') {
+        cleanup();
+        console.log('  → Continue\n');
+        resolve('continue');
+      } else if (char === '2' || char === 'f' || char === 'F') {
+        cleanup();
+        console.log('  → Follow up\n');
+        handleFollowUp().then(resolve);
+      } else if (char === '3' || char === 's' || char === 'S') {
+        cleanup();
+        console.log('  → Save & exit\n');
+        resolve('save');
+      } else if (char === '4' || char === 'q' || char === 'Q') {
+        cleanup();
+        console.log('  → Quit\n');
+        resolve('quit');
+      } else if (char === '\r' || char === '\n') {
+        // Enter defaults to continue
+        cleanup();
+        console.log('  → Continue\n');
+        resolve('continue');
+      }
+    };
+
+    process.stdin.on('data', onData);
   });
-  
-  if (action === 'followup') {
-    const { message } = await prompts({
-      type: 'text',
-      name: 'message',
-      message: 'Enter your follow-up message:',
-    }, {
-      onCancel: () => false
-    });
-    
-    if (!message) {
-      return 'continue'; // No message entered, just continue
-    }
-    
-    // Show plan update UI
-    await updatePlanWithFollowUp(message);
-    // Reset Ctrl+C count after successful plan update
-    ctrlCCount = 0;
-    return 'continue'; // Continue with (possibly) updated plan
-  }
-  
-  return action || 'continue';
 }
 
-// SIGINT handling - global counter for force quit (NEVER reset except on successful menu action)
-let ctrlCCount = 0;
-let lastCtrlCTime = 0;
-
-// Force quit helper - called from any signal handler
-const checkForceQuit = () => {
-  const now = Date.now();
-  // Reset counter if more than 3 seconds since last Ctrl+C
-  if (now - lastCtrlCTime > 3000) {
-    ctrlCCount = 0;
-  }
-  lastCtrlCTime = now;
-  ctrlCCount++;
+async function handleFollowUp(): Promise<'continue' | 'followup' | 'save' | 'quit'> {
+  const { message } = await prompts({
+    type: 'text',
+    name: 'message',
+    message: 'Enter your follow-up message:',
+  }, {
+    onCancel: () => false
+  });
   
-  if (ctrlCCount >= 2) {
-    // Force quit immediately - don't wait for anything
-    console.log('\n\n  [!] Force quit');
-    process.exit(130);
+  if (!message) {
+    return 'continue';
   }
-  return false; // Not force quit yet
-};
-
-const mainSigintHandler = async () => {
-  // Always check force quit first
-  if (checkForceQuit()) return;
   
-  // If already showing menu, just show message (force quit handled above)
+  await updatePlanWithFollowUp(message);
+  return 'continue';
+}
+
+// SIGINT handler - shows menu on first press
+const handleInterrupt = async () => {
+  // If already showing menu, the prompts onCancel handles force quit
   if (interruptPending) {
-    log('\n  [!] Press Ctrl+C again to force quit', 'yellow');
     return;
   }
   
@@ -374,7 +395,7 @@ const mainSigintHandler = async () => {
     currentAbortController.abort();
   }
   
-  // Create pause promise - verifyCompletion will await this
+  // Create pause promise
   pausePromise = new Promise<void>((resolve) => {
     pauseResolver = resolve;
   });
@@ -382,8 +403,6 @@ const mainSigintHandler = async () => {
   try {
     const action = await showInterruptMenu();
     
-    // Only reset counter on successful menu completion
-    ctrlCCount = 0;
     interruptPending = false;
     
     // Clear pause state
@@ -408,7 +427,7 @@ const mainSigintHandler = async () => {
       log('  [>] Resuming agent...', 'green');
     }
   } catch {
-    // Menu was cancelled (e.g., by another Ctrl+C) - DON'T reset ctrlCCount
+    // Menu was cancelled - this happens when user pressed Ctrl+C once (not force quit)
     interruptPending = false;
     if (pauseResolver) {
       pauseResolver();
@@ -420,12 +439,9 @@ const mainSigintHandler = async () => {
   }
 };
 
-process.on('SIGINT', mainSigintHandler);
+process.on('SIGINT', () => handleInterrupt());
 
-process.on('SIGTERM', () => {
-  // Treat SIGTERM same as SIGINT
-  mainSigintHandler();
-});
+process.on('SIGTERM', () => handleInterrupt());
 
 // Handle uncaught errors
 process.on('uncaughtException', async (error) => {
