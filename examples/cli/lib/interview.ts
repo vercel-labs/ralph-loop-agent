@@ -5,19 +5,20 @@
  * so it no longer requires the Vercel sandbox to be running.
  */
 
+import prompts from 'prompts';
 import { runPlanMode } from './plan-mode.js';
 import { log } from './logger.js';
 
 /**
  * Get the task prompt from various sources (reads from local directory, not sandbox):
  * 1. CLI argument (string or path to .md file)
- * 2. PROMPT.md in the local directory
+ * 2. PROMPT.md in the local directory (asks user if they want to use it or start fresh)
  * 3. Interactive Plan Mode (no longer requires sandbox)
  */
 export async function getTaskPrompt(
   promptArg: string | undefined,
   localDir: string
-): Promise<{ prompt: string; source: string } | { needsInterview: true; localDir: string }> {
+): Promise<{ prompt: string; source: string } | { needsInterview: true; localDir: string; replaceExistingPrompt?: boolean }> {
   const pathModule = await import('path');
   const fsModule = await import('fs/promises');
 
@@ -39,17 +40,47 @@ export async function getTaskPrompt(
   }
 
   // Check for PROMPT.md in local directory (not sandbox)
+  const promptPath = pathModule.join(localDir, 'PROMPT.md');
+  let existingPrompt: string | null = null;
+  
   try {
-    const promptPath = pathModule.join(localDir, 'PROMPT.md');
-    const content = await fsModule.readFile(promptPath, 'utf-8');
-    if (content) {
-      return { prompt: content.trim(), source: 'PROMPT.md' };
-    }
+    existingPrompt = await fsModule.readFile(promptPath, 'utf-8');
   } catch {
     // No PROMPT.md found
   }
 
-  // Need Plan Mode - pass localDir so it can create the just-bash shell
+  if (existingPrompt) {
+    // Show preview of existing prompt
+    const preview = existingPrompt.trim().slice(0, 200) + (existingPrompt.length > 200 ? '...' : '');
+    log(`\nFound existing PROMPT.md:`, 'cyan');
+    log(`  ${preview.split('\n').join('\n  ')}`, 'dim');
+    console.log();
+    
+    const { choice } = await prompts({
+      type: 'select',
+      name: 'choice',
+      message: 'What would you like to do?',
+      choices: [
+        { title: 'Use existing PROMPT.md', value: 'use' },
+        { title: 'Start fresh (Plan Mode)', value: 'new' },
+        { title: 'Cancel', value: 'cancel' },
+      ],
+    });
+
+    if (choice === 'cancel' || choice === undefined) {
+      log('Cancelled.', 'yellow');
+      process.exit(0);
+    }
+
+    if (choice === 'use') {
+      return { prompt: existingPrompt.trim(), source: 'PROMPT.md' };
+    }
+
+    // User chose to start fresh - will delete old PROMPT.md after planning
+    return { needsInterview: true, localDir, replaceExistingPrompt: true };
+  }
+
+  // No PROMPT.md - need Plan Mode
   return { needsInterview: true, localDir };
 }
 
