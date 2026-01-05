@@ -384,6 +384,12 @@ Then use that exact version. NEVER guess or use outdated versions.
 - Use takeScreenshot to visually verify UI changes
 - Be thorough but efficient
 
+## NEVER DO THIS:
+- NEVER use \`cat > file << 'EOF'\` or heredocs to create files - use writeFile tool instead
+- NEVER use \`echo "..." > file\` to create files - use writeFile tool instead
+- NEVER use shell commands to create or modify files - always use the file tools (writeFile, editFile)
+- Using cat/echo wastes tokens and bypasses proper file tracking
+
 Sandbox dev server URL: ${sandboxDomain}`;
 
   const instructions = agentsMd 
