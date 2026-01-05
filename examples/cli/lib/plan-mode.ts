@@ -331,18 +331,11 @@ Remember to output the revised plan in the exact same format:
     }
   }
 
-  // Step 5: Ask about saving
-  const { saveToFile } = await prompts({
-    type: 'confirm',
-    name: 'saveToFile',
-    message: 'Save as PROMPT.md in the target directory?',
-    initial: true,
-  }, { onCancel });
-
   // Convert the plan to a proper prompt format
   const prompt = formatPlanAsPrompt(finalPlan);
 
-  return { prompt, saveToFile };
+  // Always save when approved (user already confirmed they want to proceed)
+  return { prompt, saveToFile: true };
 }
 
 /**
