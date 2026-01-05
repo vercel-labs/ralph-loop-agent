@@ -15,33 +15,57 @@ This directory contains example projects demonstrating how to use `ralph-loop-ag
 ```bash
 cd examples/cli
 pnpm install
-pnpm start -- /path/to/your/project
 ```
 
-Or with a specific prompt:
+### Local Directory
 
 ```bash
-pnpm start -- /path/to/project "Migrate from Jest to Vitest"
+# Interactive Plan Mode
+pnpm cli /path/to/your/project
+
+# With a specific prompt
+pnpm cli /path/to/project "Migrate from Jest to Vitest"
+
+# With a prompt file
+pnpm cli /path/to/project ./task.md
 ```
 
-Or create a `PROMPT.md` file in your target project and run:
+### GitHub Repository
+
+Clone a repo, run the task, and create a PR:
 
 ```bash
-pnpm start -- /path/to/project
+pnpm cli https://github.com/owner/repo "Upgrade dependencies"
+pnpm cli https://github.com/owner/repo ./task.md
+```
+
+### Using PROMPT.md
+
+Create a `PROMPT.md` file in your target project describing the task, then run:
+
+```bash
+pnpm cli /path/to/project
 ```
 
 ## Environment Variables
 
-The CLI requires the following environment variables:
+The CLI requires the following environment variables. Create a `.env` file in `examples/cli/`:
 
 ```bash
-# AI Gateway API key (uses AI Gateway, not provider-specific packages)
-export AI_GATEWAY_API_KEY=your_api_key_here
-
-# Vercel Sandbox (for secure code execution)
-export SANDBOX_VERCEL_TOKEN=your_vercel_token
-export SANDBOX_VERCEL_TEAM_ID=your_team_id
-export SANDBOX_VERCEL_PROJECT_ID=your_project_id
+# Vercel Sandbox (required for isolated code execution)
+SANDBOX_VERCEL_TOKEN=your_vercel_token
+SANDBOX_VERCEL_TEAM_ID=your_team_id
+SANDBOX_VERCEL_PROJECT_ID=your_project_id
 ```
 
-You can also create a `.env` file in the `examples/cli` directory with these values.
+### Optional: GitHub CLI
+
+For automatic PR creation when using GitHub repo URLs:
+
+```bash
+# Install
+brew install gh
+
+# Authenticate
+gh auth login
+```

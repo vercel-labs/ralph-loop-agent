@@ -13,68 +13,113 @@ A general-purpose autonomous coding agent for long-running tasks like:
 ## Usage
 
 ```bash
-# Interactive mode - will interview you to define the task
-pnpm start -- /path/to/project
+# Local directory - Interactive Plan Mode
+pnpm cli /path/to/project
 
-# With an inline prompt
-pnpm start -- /path/to/project "Migrate from CommonJS to ESM"
+# Local directory - With an inline prompt
+pnpm cli /path/to/project "Migrate from CommonJS to ESM"
 
-# With a prompt file
-pnpm start -- /path/to/project ./my-task.md
+# Local directory - With a prompt file
+pnpm cli /path/to/project ./my-task.md
+
+# GitHub repo - Clones, runs task, creates PR
+pnpm cli https://github.com/owner/repo "Upgrade dependencies to latest"
+pnpm cli https://github.com/owner/repo ./task.md
 ```
 
-## Interactive Mode
+## Plan Mode (Interactive)
 
-If no `PROMPT.md` exists and no prompt is provided, the CLI will interview you with **AI-powered suggestions**:
+If no `PROMPT.md` exists and no prompt is provided, the CLI enters **Plan Mode** - an AI-powered conversation to define your task:
 
 ```
-? What type of task is this? › 
-❯   Create - Create a new project, app, or library from scratch
-    Migration - Migrate between frameworks, libraries, or patterns
-    Upgrade - Upgrade dependencies or language versions
+╭───────────────────────────────────────────────────────────────╮
+│  Plan Mode - Describe your task and I'll create a plan        │
+╰───────────────────────────────────────────────────────────────╯
+
+You: I want to upgrade better-auth to the latest version
+
+AI: I'll analyze the codebase to understand the current setup...
+    [reads package.json, lib/auth.ts, etc.]
+    
+    Here's my plan:
+    
+    ## Goal
+    Upgrade better-auth from ^1.3.34 to latest version
+    
+    ## Steps
+    1. Check latest version and changelog
+    2. Update package.json
+    3. Run pnpm install
+    4. Verify type-check passes
+    5. Test auth endpoints
     ...
 
-? Give your task a short title: › Migration: Jest to Vitest
-
-Analyzing codebase...
-  Generating suggestions...
-
-? What needs to be done? ›
-❯   Convert all Jest test files to use Vitest syntax and assertions
-    Update test configuration from jest.config.js to vitest.config.ts
-    Replace Jest mocking utilities with Vitest equivalents
-    ✏️  Other (enter custom)
-
-? What context is important? ›
-❯   TypeScript project using ES modules, tests located in __tests__ directories
-    Using React Testing Library for component tests
-    CI pipeline runs tests with coverage requirements
-    ✏️  Other (enter custom)
-
-? Where should the agent focus? ›
-❯   src/__tests__/, tests/, *.test.ts files
-    jest.config.js, package.json test scripts
-    Mock files in __mocks__ directories
-    ✏️  Other (enter custom)
-
-? How should success be verified? ›  (user selects)
-◉   Run tests
-◉   Type check (tsc)
-◯   Lint
-◯   Build
-
-? What does success look like? ›
-❯   All 150 existing tests pass with Vitest, no Jest dependencies remain
-    Test coverage remains at or above 80%
-    CI pipeline passes with new test runner
-    ✏️  Other (enter custom)
-
-? Save as PROMPT.md in the target directory? › yes
+? What would you like to do?
+❯ Approve - Start the task
+  Refine - Modify the plan
+  Cancel - Exit
 ```
 
-The AI analyzes your codebase and generates contextual suggestions for each question. Select a suggestion or choose "Other" to enter custom text.
+The AI can read your codebase (read-only) to understand context and generate a detailed plan.
+
+## GitHub Repo Mode
+
+When you provide a GitHub URL instead of a local path:
+
+1. **Clones** the repo to `tasks/[owner]/[repo]/[timestamp]/`
+2. **Runs** Plan Mode or uses provided prompt
+3. **Executes** the task in the sandbox
+4. **Creates a PR** with the changes (via `gh` CLI)
+
+```bash
+pnpm cli https://github.com/vercel-labs/ai-chatbot "Add dark mode support"
+```
+
+After completion:
+```
+━━━ Creating Pull Request ━━━
+  [i] 6 files changed
+  [-] Creating branch: ralph/add-dark-mode-support-a1b2c3
+  [+] Pushed to origin/ralph/add-dark-mode-support-a1b2c3
+  [+] Pull request created: https://github.com/vercel-labs/ai-chatbot/pull/123
+```
+
+## Architecture
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Coding Agent   │────▶│  Vercel Sandbox │────▶│   Judge Agent   │
+│  (Claude Opus)  │     │  (Isolated Env) │     │  (Claude Opus)  │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │                       │                       │
+        ▼                       ▼                       ▼
+   Writes code            Runs commands          Reviews work
+   Takes screenshots      Dev server             Approves/rejects
+   Interacts with UI      Type-check/build       Visual verification
+```
+
+- **Coding Agent**: Writes code, runs commands, takes screenshots
+- **Vercel Sandbox**: Isolated environment with PostgreSQL, Redis, Playwright
+- **Judge Agent**: Reviews completed work, can approve or request changes
 
 ## Features
+
+### Sandbox Environment
+All code runs in an isolated Vercel Sandbox:
+- **Playwright** pre-installed for screenshots and browser testing
+- **PostgreSQL** available for database migrations
+- **Redis** available for caching
+- Dev server accessible via public URL
+
+### Visual Verification
+The agent can see what it's building:
+```
+[>] Taking screenshot of https://sb-xxx.vercel.run
+    Screenshot saved to /tmp/screenshot.png
+    Analyzing screenshot...
+    Vision: The page shows a todo app with a header "Todos". There's an input 
+            field for adding items and 3 existing todos below...
+```
 
 ### Context Management
 Handles long conversations automatically:
@@ -86,7 +131,8 @@ Handles long conversations automatically:
 - `editFile` tool for surgical search/replace (more token-efficient than full rewrites)
 - `readFile` with `lineStart`/`lineEnd` for reading specific sections of large files
 
-### Tools Available
+## Tools Available
+
 | Tool | Description |
 |------|-------------|
 | `listFiles` | Glob-based file listing |
@@ -95,10 +141,42 @@ Handles long conversations automatically:
 | `editFile` | Search/replace editing |
 | `deleteFile` | Delete files |
 | `runCommand` | Execute shell commands |
+| `startDevServer` | Start a dev server (background) |
+| `detectPackageManager` | Detect npm/yarn/pnpm/bun |
+| `takeScreenshot` | Screenshot + AI vision analysis |
+| `browserInteract` | Navigate, click, fill forms |
+| `runPlaywrightTest` | Run Playwright test files |
 | `markComplete` | Signal task completion |
 
-## Environment
+## Environment Variables
+
+Create a `.env` file in the `examples/cli` directory:
 
 ```bash
-export ANTHROPIC_API_KEY=your_key_here
+# Vercel Sandbox (required)
+SANDBOX_VERCEL_TOKEN=your_vercel_token
+SANDBOX_VERCEL_TEAM_ID=your_team_id
+SANDBOX_VERCEL_PROJECT_ID=your_project_id
+
+# Optional: GitHub CLI for PR creation
+# Install with: brew install gh
+# Authenticate with: gh auth login
 ```
+
+## Interrupt Handling
+
+Press `Ctrl+C` during execution to see options:
+
+```
+╔═══════════════════════════════════════╗
+║           INTERRUPTED (Ctrl+C)         ║
+╚═══════════════════════════════════════╝
+
+? What would you like to do?
+❯ Continue       - Resume the current task
+  Follow up      - Send a message to the agent
+  Save & exit    - Copy files back and exit
+  Quit           - Exit WITHOUT saving changes
+```
+
+Press `Ctrl+C` twice quickly to force quit.
