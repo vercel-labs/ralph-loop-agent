@@ -1,6 +1,6 @@
 {
   "name": "ralph-loop-agent",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vercel-labs/ralph-loop-agent.git"
