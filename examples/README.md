@@ -30,8 +30,16 @@ pnpm start -- /path/to/project
 
 ## Environment Variables
 
-The CLI requires an API key (uses AI Gateway):
+The CLI requires the following environment variables:
 
 ```bash
-export ANTHROPIC_API_KEY=your_key_here
+# AI Gateway API key (uses AI Gateway, not provider-specific packages)
+export AI_GATEWAY_API_KEY=your_api_key_here
+
+# Vercel Sandbox (for secure code execution)
+export SANDBOX_VERCEL_TOKEN=your_vercel_token
+export SANDBOX_VERCEL_TEAM_ID=your_team_id
+export SANDBOX_VERCEL_PROJECT_ID=your_project_id
 ```
+
+You can also create a `.env` file in the `examples/cli` directory with these values.
