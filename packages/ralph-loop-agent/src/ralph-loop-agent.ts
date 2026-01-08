@@ -661,6 +661,224 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
   }
 
   /**
+   * Streams ALL iterations of the agent loop.
+   *
+   * Unlike stream() which only streams the final iteration, streamAll() yields
+   * a stream for EVERY iteration, enabling real-time UI updates as the agent
+   * works through multiple iterations.
+   *
+   * @example
+   * ```typescript
+   * const generator = agent.streamAll({ prompt: 'Do the task' });
+   *
+   * for await (const { iteration, stream, isLast } of generator) {
+   *   console.log(`Streaming iteration ${iteration}`);
+   *   for await (const chunk of stream) {
+   *     // Process chunks from this iteration
+   *   }
+   * }
+   *
+   * const result = await generator.return?.value;
+   * ```
+   */
+  async *streamAll({
+    prompt,
+    abortSignal,
+  }: RalphLoopAgentCallParameters): AsyncGenerator<
+    {
+      iteration: number;
+      stream: StreamTextResult<TOOLS, never>;
+      isLast: boolean;
+    },
+    RalphLoopAgentResult<TOOLS>
+  > {
+    const allResults: Array<GenerateTextResult<TOOLS, never>> = [];
+    let currentMessages: Array<ModelMessage> = [];
+    let iteration = 0;
+    let totalUsage: LanguageModelUsage = this.createEmptyUsage();
+    let completionReason: RalphLoopAgentResult<TOOLS>['completionReason'] = 'max-iterations';
+    let reason: string | undefined;
+
+    const stopConditions = this.getStopConditions();
+    const modelId = this.getModelId();
+
+    const initialUserMessage: ModelMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: prompt }],
+    };
+
+    const systemMessages = this.buildSystemMessages();
+
+    // Reset context manager
+    this.contextManager?.clear();
+
+    while (true) {
+      if (abortSignal?.aborted) {
+        completionReason = 'aborted';
+        break;
+      }
+
+      iteration++;
+      const startTime = Date.now();
+
+      await this.settings.onIterationStart?.({ iteration });
+
+      const messages: Array<ModelMessage> = [
+        ...systemMessages,
+        initialUserMessage,
+        ...currentMessages,
+      ];
+
+      if (iteration > 1) {
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Continue working on the task. The previous attempt was not complete.',
+            },
+          ],
+        });
+      }
+
+      // Check if NEXT iteration would hit stop condition
+      const nextStopContext: RalphStopConditionContext<TOOLS> = {
+        iteration: iteration + 1,
+        allResults,
+        totalUsage,
+        model: modelId,
+      };
+      const wouldStopNext = await isRalphStopConditionMet({ stopConditions, context: nextStopContext });
+
+      // Stream THIS iteration
+      const streamResult = streamText({
+        model: this.settings.model,
+        messages,
+        tools: this.settings.tools,
+        toolChoice: this.settings.toolChoice,
+        stopWhen: this.settings.toolStopWhen ?? stepCountIs(20),
+        maxOutputTokens: this.settings.maxOutputTokens,
+        temperature: this.settings.temperature,
+        topP: this.settings.topP,
+        topK: this.settings.topK,
+        presencePenalty: this.settings.presencePenalty,
+        frequencyPenalty: this.settings.frequencyPenalty,
+        stopSequences: this.settings.stopSequences,
+        seed: this.settings.seed,
+        experimental_telemetry: this.settings.experimental_telemetry,
+        activeTools: this.settings.activeTools,
+        prepareStep: this.settings.prepareStep,
+        experimental_repairToolCall: this.settings.experimental_repairToolCall,
+        providerOptions: this.settings.providerOptions,
+        experimental_context: this.settings.experimental_context,
+        abortSignal,
+      }) as StreamTextResult<TOOLS, never>;
+
+      // Yield the stream to the caller
+      yield {
+        iteration,
+        stream: streamResult,
+        isLast: wouldStopNext,
+      };
+
+      // After caller consumes the stream, collect the final result
+      // We need to wait for the stream to complete
+      const text = await streamResult.text;
+      const usage = await streamResult.usage;
+      const response = await streamResult.response;
+
+      // Extract tool calls from response messages for verification
+      const steps: Array<{ toolCalls?: Array<{ toolName: string; args: unknown }> }> = [];
+      for (const msg of response.messages) {
+        if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+          const toolCalls: Array<{ toolName: string; args: unknown }> = [];
+          for (const part of msg.content) {
+            if (part.type === 'tool-call') {
+              toolCalls.push({
+                toolName: part.toolName,
+                args: (part as unknown as { toolName: string; args: unknown }).args,
+              });
+            }
+          }
+          if (toolCalls.length > 0) {
+            steps.push({ toolCalls });
+          }
+        }
+      }
+
+      // Convert stream result to a GenerateTextResult-like structure for storage
+      // We only need the fields that verifyCompletion uses
+      const iterationResult = {
+        text,
+        usage,
+        response,
+        steps,
+      } as unknown as GenerateTextResult<TOOLS, never>;
+
+      allResults.push(iterationResult);
+      totalUsage = addLanguageModelUsage(totalUsage, usage);
+      currentMessages = [...currentMessages, ...response.messages];
+
+      const duration = Date.now() - startTime;
+      await this.settings.onIterationEnd?.({ iteration, duration, result: iterationResult });
+
+      // Check stop conditions
+      const stopContext: RalphStopConditionContext<TOOLS> = {
+        iteration,
+        allResults,
+        totalUsage,
+        model: modelId,
+      };
+
+      if (await isRalphStopConditionMet({ stopConditions, context: stopContext })) {
+        completionReason = 'max-iterations';
+        break;
+      }
+
+      // Verify completion
+      if (this.settings.verifyCompletion) {
+        const verification = await this.settings.verifyCompletion({
+          result: iterationResult,
+          iteration,
+          allResults,
+          originalPrompt: prompt,
+        });
+
+        if (verification.complete) {
+          completionReason = 'verified';
+          reason = verification.reason;
+          break;
+        }
+
+        if (verification.reason) {
+          currentMessages.push({
+            role: 'user',
+            content: [{ type: 'text', text: `Feedback: ${verification.reason}` }],
+          });
+
+          this.contextManager?.addChangeLogEntry({
+            type: 'observation',
+            summary: 'Verification feedback received',
+            details: verification.reason.slice(0, 200),
+          });
+        }
+      }
+    }
+
+    const finalResult = allResults[allResults.length - 1]!;
+
+    return {
+      text: finalResult.text,
+      iterations: iteration,
+      completionReason,
+      reason,
+      result: finalResult,
+      allResults,
+      totalUsage,
+    };
+  }
+
+  /**
    * Build system messages from instructions.
    */
   private buildSystemMessages(): Array<ModelMessage> {
