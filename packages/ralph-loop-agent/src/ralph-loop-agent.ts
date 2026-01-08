@@ -741,7 +741,10 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
         });
       }
 
-      // Check if NEXT iteration would hit stop condition
+      // Check if NEXT iteration would hit stop condition (based on stopWhen conditions only)
+      // NOTE: This does NOT account for verifyCompletion returning true, so isLast may be
+      // false even when this turns out to be the last iteration. Consumers should check
+      // for mark_complete or similar signals in the tool calls to detect early completion.
       const nextStopContext: RalphStopConditionContext<TOOLS> = {
         iteration: iteration + 1,
         allResults,
@@ -787,8 +790,14 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
       const usage = await streamResult.usage;
       const response = await streamResult.response;
 
-      // Extract tool calls from response messages for verification
-      const steps: Array<{ toolCalls?: Array<{ toolName: string; args: unknown }> }> = [];
+      // Extract tool calls AND tool results from response messages for verification
+      // This mirrors what generateText returns in its steps array
+      const steps: Array<{
+        toolCalls?: Array<{ toolName: string; args: unknown }>;
+        toolResults?: Array<{ toolName: string; toolCallId: string; result: unknown; output?: unknown }>;
+      }> = [];
+
+      // First pass: collect tool calls from assistant messages
       for (const msg of response.messages) {
         if (msg.role === 'assistant' && Array.isArray(msg.content)) {
           const toolCalls: Array<{ toolName: string; args: unknown }> = [];
@@ -802,6 +811,37 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
           }
           if (toolCalls.length > 0) {
             steps.push({ toolCalls });
+          }
+        }
+      }
+
+      // Second pass: collect tool results from tool messages and attach to steps
+      for (const msg of response.messages) {
+        if (msg.role === 'tool' && Array.isArray(msg.content)) {
+          const toolResults: Array<{ toolName: string; toolCallId: string; result: unknown; output?: unknown }> = [];
+          for (const part of msg.content) {
+            if (part.type === 'tool-result') {
+              const toolPart = part as unknown as {
+                toolName: string;
+                toolCallId: string;
+                result: unknown;
+              };
+              toolResults.push({
+                toolName: toolPart.toolName,
+                toolCallId: toolPart.toolCallId,
+                result: toolPart.result,
+                output: toolPart.result, // Alias for compatibility with CLI example pattern
+              });
+            }
+          }
+          // Add tool results to the last step (or create a new step if none exists)
+          if (toolResults.length > 0) {
+            if (steps.length > 0) {
+              const lastStep = steps[steps.length - 1];
+              lastStep.toolResults = [...(lastStep.toolResults || []), ...toolResults];
+            } else {
+              steps.push({ toolResults });
+            }
           }
         }
       }
