@@ -836,8 +836,8 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
           }
           // Add tool results to the last step (or create a new step if none exists)
           if (toolResults.length > 0) {
-            if (steps.length > 0) {
-              const lastStep = steps[steps.length - 1];
+            const lastStep = steps[steps.length - 1];
+            if (lastStep) {
               lastStep.toolResults = [...(lastStep.toolResults || []), ...toolResults];
             } else {
               steps.push({ toolResults });
