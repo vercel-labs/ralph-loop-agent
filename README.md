@@ -275,6 +275,81 @@ interface RalphLoopAgentResult {
 
 Runs non-streaming iterations until verification passes, then streams the final one. Returns `StreamTextResult`.
 
+## Using Claude Max Subscription (No API Key)
+
+Ralph Loop Agent supports running without an API key by using the official [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript). This spawns Claude Code as a subprocess, authenticating with your Claude account.
+
+### Installation
+
+```bash
+npm install ralph-loop-agent @anthropic-ai/claude-agent-sdk
+```
+
+Make sure you're authenticated with Claude Code:
+```bash
+claude auth login
+```
+
+### Usage
+
+```typescript
+import { runWithClaudeCode } from 'ralph-loop-agent/providers/claude-code';
+
+const result = await runWithClaudeCode({
+  prompt: 'Fix all TypeScript errors in the project',
+  maxTurns: 10,
+  permissionMode: 'acceptEdits',  // auto-accept file edits
+
+  verifyCompletion: async ({ text }) => ({
+    complete: text.includes('All errors fixed'),
+    reason: 'Errors remain',
+  }),
+
+  onTurnStart: ({ turn }) => console.log(`Starting turn ${turn}`),
+  onTurnEnd: ({ turn }) => console.log(`Completed turn ${turn}`),
+});
+
+console.log(`Completed in ${result.turns} turns`);
+console.log(`Reason: ${result.completionReason}`);
+console.log(`Cost: $${result.cost?.toFixed(4)} (covered by subscription)`);
+```
+
+### API Reference
+
+#### `runWithClaudeCode(options)`
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `prompt` | `string` | **required** | The task to complete |
+| `maxTurns` | `number` | `10` | Maximum turns before stopping |
+| `model` | `string` | CLI default | Claude model to use |
+| `cwd` | `string` | `process.cwd()` | Working directory |
+| `permissionMode` | `'default' \| 'acceptEdits' \| 'bypassPermissions'` | `'acceptEdits'` | How to handle permissions |
+| `systemPromptAppend` | `string` | - | Text to append to system prompt |
+| `verifyCompletion` | `function` | - | Verification callback |
+| `onTurnStart` | `function` | - | Called at turn start |
+| `onTurnEnd` | `function` | - | Called at turn end |
+
+#### Return Value
+
+```typescript
+interface ClaudeCodeResult {
+  text: string;                    // Final output text
+  turns: number;                   // Turns executed
+  completionReason: 'verified' | 'max-turns' | 'error';
+  reason?: string;                 // Reason from verification
+  cost?: number;                   // Cost (covered by subscription)
+  allMessages: SDKMessage[];       // All SDK messages
+}
+```
+
+### Benefits
+
+- **No API key required** - Uses your Claude Max subscription
+- **Full Claude Code tools** - Access to Bash, Read, Edit, Grep, etc.
+- **Permission control** - Auto-accept edits or prompt for approval
+- **Cost tracking** - See usage (covered by subscription, not billed separately)
+
 ## License
 
 Apache-2.0
