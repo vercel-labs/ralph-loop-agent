@@ -52,6 +52,31 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  examples/search:
+    dependencies:
+      '@ai-sdk/mcp':
+        specifier: 1.0.2
+        version: 1.0.2(zod@4.3.4)
+      ai:
+        specifier: ^6.0.0
+        version: 6.0.6(zod@4.3.4)
+      ralph-loop-agent:
+        specifier: workspace:*
+        version: link:../../packages/ralph-loop-agent
+      zod:
+        specifier: ^4.0.0
+        version: 4.3.4
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.21
+        version: 22.19.3
+      tsx:
+        specifier: ^4.19.4
+        version: 4.21.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/ralph-loop-agent:
     dependencies:
       '@ai-sdk/provider-utils':
@@ -78,6 +103,12 @@ packages:
 
   '@ai-sdk/gateway@3.0.5':
     resolution: {integrity: sha512-AtxA1wcoKTHr9uFoC5KZEXqJP4SMW4j3VbcliUECUYssbWbePJ9+b3AaCny1lxf1xhDK9EIyAgBOKhXoQSr9nA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/mcp@1.0.2':
+    resolution: {integrity: sha512-1ukAZDVyRA968d/qPa8RA+LiXf2QFbEbZrlW/1/D8y1a1i8dw4JbsfeiSk3FsvPYkjojhCCouaz3dkiWE8hlaQ==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -593,6 +624,10 @@ packages:
     resolution: {integrity: sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==}
     engines: {node: '>=12'}
 
+  pkce-challenge@5.0.1:
+    resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
+    engines: {node: '>=16.20.0'}
+
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
@@ -814,6 +849,13 @@ snapshots:
       '@ai-sdk/provider': 3.0.1
       '@ai-sdk/provider-utils': 4.0.2(zod@4.3.4)
       '@vercel/oidc': 3.0.5
+      zod: 4.3.4
+
+  '@ai-sdk/mcp@1.0.2(zod@4.3.4)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.1
+      '@ai-sdk/provider-utils': 4.0.2(zod@4.3.4)
+      pkce-challenge: 5.0.1
       zod: 4.3.4
 
   '@ai-sdk/provider-utils@4.0.2(zod@4.3.4)':
@@ -1205,6 +1247,8 @@ snapshots:
   picocolors@1.1.1: {}
 
   picomatch@4.0.3: {}
+
+  pkce-challenge@5.0.1: {}
 
   postcss@8.5.6:
     dependencies:

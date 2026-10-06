@@ -22,6 +22,7 @@
 | Example | Description |
 |---------|-------------|
 | [cli](./examples/cli) | Full-featured CLI agent with Vercel Sandbox, Playwright, PostgreSQL, and GitHub PR integration |
+| [search](./examples/search) | Opt-in web search through Parallel MCP and AI SDK tools |
 
 ## Installation
 

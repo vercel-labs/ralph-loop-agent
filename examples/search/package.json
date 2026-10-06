@@ -1,0 +1,22 @@
+{
+  "name": "ralph-loop-agent-search-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "search": "tsx index.ts",
+    "test": "tsx --test search.test.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/mcp": "1.0.2",
+    "ai": "^6.0.0",
+    "ralph-loop-agent": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.9.3"
+  }
+}

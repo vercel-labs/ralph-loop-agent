@@ -9,6 +9,7 @@ This directory contains example projects demonstrating how to use `ralph-loop-ag
 | Example | Description |
 |---------|-------------|
 | [cli](./cli) | General-purpose autonomous coding agent for migrations, upgrades, refactoring, etc. |
+| [search](./search) | Web search with anonymous Parallel MCP tools |
 
 ## Running the CLI Example
 
